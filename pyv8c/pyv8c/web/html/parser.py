@@ -4,9 +4,9 @@ from html.parser import HTMLParser
 
 from ..dom.character_data import Comment, Text
 from ..dom.element import Element
-from .elements import HTMLTemplateElement
 from ..dom.nodes import _bump_style_version
 from ..dom.utils import MATHML_NAMESPACE, SVG_NAMESPACE
+from .document_elements import HTMLTemplateElement
 
 
 class _TreeBuilderMixin:

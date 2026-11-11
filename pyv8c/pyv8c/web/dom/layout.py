@@ -1381,11 +1381,15 @@ def layout_snapshot(document):
     viewport = _viewport_width(root)
     version = (document.layout_version, document.style_version, viewport)
     cached = document._layout_snapshot
-    if cached is not None and cached[0] == version:
+    animated = any(element.isConnected and any(
+        animation._play_state == 'running' and animation._playback_rate != 0
+        for animation in getattr(element, '_animations', ()))
+        for element in getattr(document, '_animated_elements', ()))
+    if not animated and cached is not None and cached[0] == version:
         return cached[1], cached[2]
     boxes, styles = {}, _StyleCache()
     layout(root, collected=boxes, styles=styles)
-    if (document.layout_version, document.style_version, _viewport_width(root)) == version:
+    if not animated and (document.layout_version, document.style_version, _viewport_width(root)) == version:
         document._layout_snapshot = (version, boxes, styles)
     return boxes, styles
 

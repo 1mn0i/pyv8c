@@ -269,6 +269,15 @@ def test_a_hit_needs_the_installed_id_the_declared_path_and_a_named_source():
     assert extension_resource(None, f"chrome-extension://{X_PATH}/icons/icon_64.png") is None
 
 
+def test_extension_paths_are_normalized_before_matching():
+    environment = installed()
+    root = f"chrome-extension://{X_PATH}"
+    assert extension_resource(environment, root + "/icons/../icons/icon_64.png") == "icons/icon_64.png"
+    assert extension_resource(environment, root + "/_locales/am/%2e%2e/%2e%2e/messages.json") is None
+    assert extension_resource(environment, root + "/icons/%00icon_64.png") is None
+    assert extension_resource(environment, root + "/icons/%5cicon_64.png") is None
+
+
 def test_a_page_the_declaration_does_not_name_cannot_read_it():
     environment = installed(**{TRANSLATE: [{"resources": ["popup_css_compiled.css"],
                                            "matches": ["https://elsewhere.test/*"]}]})

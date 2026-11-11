@@ -59,12 +59,13 @@ def test_the_archive_expands_beside_itself_and_caches_what_it_decoded(tmp_path):
     sidecar, cache = tmp_path / "idl.json", tmp_path / "idl.pyv8ccache"
 
     _forget()
-    view = Idl.load(archive, profile=None)
+    timings = {}
+    view = Idl.load(archive, profile=None, timings=timings)
 
     assert sorted(view.interfaces) == ["Element", "Node"]
     assert sidecar.read_bytes() == _member(archive)
     assert cache.is_file()
-    assert Idl._last_timings["idl_binary_cache"] is False
+    assert timings["idl_binary_cache"] is False
 
 
 def test_a_cache_hit_skips_the_parse_and_the_checks(tmp_path):
@@ -73,9 +74,20 @@ def test_a_cache_hit_skips_the_parse_and_the_checks(tmp_path):
     Idl.load(document, profile=None)
 
     _forget()
-    Idl.load(document, profile=None)
+    timings = {}
+    Idl.load(document, profile=None, timings=timings)
 
-    assert Idl._last_timings["idl_binary_cache"] is True
+    assert timings["idl_binary_cache"] is True
+
+
+def test_load_timings_are_owned_by_each_call(tmp_path):
+    document = write_idl(tmp_path / "idl.json", _document())
+    _forget()
+    first, second = {}, {}
+    Idl.load(document, profile=None, timings=first)
+    Idl.load(document, profile=None, timings=second)
+    assert first['idl_cached'] is False
+    assert second['idl_cached'] is True
 
 
 def test_a_broken_cache_is_rebuilt_instead_of_reported(tmp_path):
@@ -85,10 +97,11 @@ def test_a_broken_cache_is_rebuilt_instead_of_reported(tmp_path):
     cache.write_bytes(b"not a cache at all")
 
     _forget()
-    view = Idl.load(document, profile=None)
+    timings = {}
+    view = Idl.load(document, profile=None, timings=timings)
 
     assert sorted(view.interfaces) == ["Element", "Node"]
-    assert Idl._last_timings["idl_binary_cache"] is False
+    assert timings["idl_binary_cache"] is False
     assert cache.read_bytes().startswith(module._CACHE_MAGIC)
 
 

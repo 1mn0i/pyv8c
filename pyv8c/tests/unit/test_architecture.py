@@ -125,25 +125,40 @@ def test_non_dom_web_apis_have_their_own_modules():
     for name in ("ai", "encoding", "permissions_policy"):
         assert (web / f"{name}.py").is_file(), name
         assert not (web / "dom" / f"{name}.py").exists(), name
-    for package, module, old in (("media", "source", "media_source"), ("graphics", "webgl", "webgl")):
+    for package, module, old in (("media", "source", "media_source"),):
         assert (web / package / f"{module}.py").is_file()
         assert not (web / f"{old}.py").exists()
         assert not (web / "dom" / f"{old}.py").exists()
+    assert (web / "graphics" / "webgl" / "context.py").is_file()
+    assert not (web / "graphics" / "webgl.py").exists()
     assert (web / "bom" / "motion.py").is_file()
     assert not (web / "dom" / "motion.py").exists()
 
 
 def test_canvas_interfaces_live_in_graphics_without_html_dependency():
+    from importlib.util import resolve_name
     web = ROOT / "web"
     tag = (web / "html" / "canvas.py").read_text(encoding="utf-8")
-    graphics = (web / "graphics" / "canvas.py").read_text(encoding="utf-8")
+    canvas = web / "graphics" / "canvas"
+    graphics = "\n".join(path.read_text(encoding="utf-8") for path in canvas.glob("*.py"))
     assert "class HTMLCanvasElement(" in tag
     for name in ("CanvasRenderingContext2D", "OffscreenCanvas", "ImageBitmap", "ImageData"):
         assert f"class {name}(" in graphics or f"class {name}:" in graphics
         assert f"class {name}(" not in tag and f"class {name}:" not in tag
-    for path in (web / "graphics").glob("*.py"):
-        for level, module in _imports(path):
-            assert not (level == 2 and (module == "html" or module.startswith("html."))), path
+    for path in (web / "graphics").rglob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                assert all(not (alias.name == "pyv8c.web.html" or
+                                alias.name.startswith("pyv8c.web.html."))
+                           for alias in node.names), path
+            elif isinstance(node, ast.ImportFrom):
+                module = node.module or ""
+                if node.level:
+                    package = 'pyv8c.' + '.'.join(path.relative_to(ROOT).parts[:-1])
+                    module = resolve_name('.' * node.level + module, package)
+                assert not (module == "pyv8c.web.html" or module.startswith("pyv8c.web.html.") or
+                            (module == "pyv8c.web" and any(alias.name == "html" for alias in node.names))), path
 
 
 def test_css_has_one_home_and_no_layout_dependency():
@@ -182,7 +197,7 @@ def test_html_and_foreign_elements_have_separate_homes():
 @pytest.mark.parametrize("module", ["pyv8c.web.html.forms", "pyv8c.web.html.registry",
                                     "pyv8c.web.html.parser", "pyv8c.web.css.selectors",
                                     "pyv8c.web.svg.elements", "pyv8c.web.mathml.elements",
-                                    "pyv8c.web.graphics.canvas", "pyv8c.web.graphics.webgl",
+                                    "pyv8c.web.graphics.canvas.context2d", "pyv8c.web.graphics.canvas.offscreen", "pyv8c.web.graphics.webgl.context",
                                     "pyv8c.web.media.source", "pyv8c.web.html.canvas"])
 def test_web_element_modules_import_independently(module):
     import subprocess

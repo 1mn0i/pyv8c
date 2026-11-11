@@ -31,11 +31,6 @@ __all__ = [
 ]
 
 
-#: Stub classes for the interfaces with no body, one per document and logging mode: stable
-#: identity is what lets a later Browser reuse their specs (``assembly._COMPILED``).
-_GENERATED: dict = {}
-
-
 class Bindings:
     """One IDL collection, the Python implementations, and this Browser's host hooks."""
 
@@ -214,16 +209,12 @@ class Bindings:
             parent = self.class_for(parent_name) if parent_name else object
             implementation = self.runtime.interface(name)
             if implementation is None:
-                key = (getattr(self.idl, "digest", ""), name, parent_name, self.stub_logging)
-                cls = _GENERATED.get(key)
-                if cls is None:
-                    cls = type(name, (parent,), {
-                        "__module__": "pyv8c.engine.generated",
-                        "__init__": self._binder.stubs.constructor(name),
-                        "__idl_spec__": InterfaceSpec(name, parent_name),
-                        "__v8_idl_stub__": True,
-                    })
-                    _GENERATED[key] = cls
+                cls = type(name, (parent,), {
+                    "__module__": "pyv8c.engine.generated",
+                    "__init__": self._binder.stubs.constructor(name),
+                    "__idl_spec__": InterfaceSpec(name, parent_name),
+                    "__v8_idl_stub__": True,
+                })
             else:
                 cls = implementation
             self._classes[name] = cls

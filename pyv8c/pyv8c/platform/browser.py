@@ -269,6 +269,8 @@ class Browser:
                  expose_unimplemented: bool = True,
                  stub_logging: Literal["on", "verbose", "off"] = "off",
                  interface_overrides: dict | None = None,
+                 webgl_backend: Literal["simulated", "angle"] = "simulated",
+                 angle_library_dir: str | os.PathLike | None = None,
                  idl_path: str | os.PathLike | None = None,
                  baseline_mismatch: Literal["error", "warn"] = "warn"):
         """Configure one browser.
@@ -348,6 +350,11 @@ class Browser:
             calls read-only, a bound method and anything not callable are refused
             here.  Constructors, constants and the named/indexed handlers are not
             covered.
+        :param webgl_backend: select the default simulated backend or the
+            experimental ANGLE WebGL 1 subset. Install ``pyv8c[angle]`` for ANGLE.
+            The experimental backend is not suitable for untrusted content.
+        :param angle_library_dir: use ANGLE libraries from this directory instead
+            of comfy-angle; for compatibility, specifying it also selects ANGLE.
         :param idl_path: Chromium interface baseline JSON or ZIP to
             use instead of the bundled one.
         :param baseline_mismatch: ``"warn"`` (the default) logs a difference
@@ -395,7 +402,21 @@ class Browser:
         self.expose_unimplemented = bool(expose_unimplemented)
         self.stub_logging = str(stub_logging or "off")
         self._startup_stats = {}
-        snapshot = Idl.load(idl_path)
+        self._graphics_backend = None
+        if webgl_backend not in ("simulated", "angle"):
+            raise ValueError("webgl_backend must be 'simulated' or 'angle'")
+        if webgl_backend == "angle" or angle_library_dir is not None:
+            if angle_library_dir is None:
+                try:
+                    import comfy_angle
+                except ModuleNotFoundError as error:
+                    if error.name != 'comfy_angle':
+                        raise
+                    raise ImportError("ANGLE backend requires comfy-angle; install pyv8c[angle]") from error
+                angle_library_dir = comfy_angle.get_lib_dir()
+            from ..web.graphics.webgl.backends.angle import AngleBackend
+            self._graphics_backend = AngleBackend(angle_library_dir)
+        snapshot = Idl.load(idl_path, timings=self._startup_stats)
         loaded = time.perf_counter_ns()
         self.bindings = Bindings(
             snapshot, runtime=bootstrap_runtime(),
@@ -407,7 +428,6 @@ class Browser:
         validation_finished = validation_started = loaded
         self.idl_path = snapshot.path
         self.idl_info = snapshot.info
-        self._startup_stats.update(Idl._last_timings)
         plan = self.bindings.plan("Window")
         self._startup_stats.update({
             "validation_ms": (validation_finished - validation_started) / 1_000_000,

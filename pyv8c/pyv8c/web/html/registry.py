@@ -2,23 +2,12 @@
 modules, which only need the node model below."""
 
 from .canvas import HTMLCanvasElement
-from .elements import (
-    HTMLAnchorElement,
-    HTMLButtonElement,
-    HTMLImageElement,
-    HTMLElement,
-    HTMLLabelElement,
-    HTMLLinkElement,
-    HTMLMetaElement,
-    HTMLScriptElement,
-    HTMLStyleElement,
-    HTMLTableCellElement,
-    HTMLTableElement,
-    HTMLTableRowElement,
-    HTMLTemplateElement,
-    HTMLUnknownElement,
-    _html_class,
-)
+from .elements import HTMLElement, HTMLUnknownElement, html_class
+from .controls import HTMLButtonElement, HTMLLabelElement
+from .table import HTMLTableElement, HTMLTableRowElement, HTMLTableCellElement
+from .image import HTMLImageElement
+from .links import HTMLAnchorElement, HTMLLinkElement
+from .document_elements import HTMLMetaElement, HTMLScriptElement, HTMLStyleElement, HTMLTemplateElement
 from .forms import HTMLFormElement
 from .iframe import HTMLIFrameElement
 from .inputs import (
@@ -33,11 +22,11 @@ from .tag_interfaces import TAG_INTERFACES
 
 #: IdlInterface name -> implementation class, for every modelled interface.
 HTML_CLASSES = {
-    **{name: _html_class(name) for name in (
+    **{name: html_class(name) for name in (
         "HTMLHtmlElement", "HTMLHeadElement", "HTMLBodyElement", "HTMLDivElement",
         "HTMLSpanElement")},
     #: The interfaces the measured tag table asks for that have nothing hand-written.
-    **{name: _html_class(name) for name in (
+    **{name: html_class(name) for name in (
         "HTMLAreaElement", "HTMLBRElement", "HTMLBaseElement", "HTMLDListElement",
         "HTMLDataElement", "HTMLDataListElement", "HTMLDetailsElement", "HTMLDialogElement",
         "HTMLDirectoryElement", "HTMLEmbedElement", "HTMLFieldSetElement", "HTMLFontElement",

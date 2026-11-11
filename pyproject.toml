@@ -23,6 +23,8 @@ dependencies = [
 cronet = ["cycronet>=144.4.7,<151"]
 # The drawing surface behind CanvasRenderingContext2D and OffscreenCanvas pixels.
 canvas = ["Pillow>=10"]
+# ANGLE libraries for the experimental opt-in WebGL backend.
+angle = ["comfy-angle==0.1.1"]
 dev = [
     "pytest>=7.4",
     "pytest-timeout>=2.2",

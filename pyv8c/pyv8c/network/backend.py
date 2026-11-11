@@ -75,9 +75,10 @@ def _distinct(*parts):
 class NetworkBackend:
     """The engines of one context; an absent one refuses the calls that need it."""
 
-    def __init__(self, http=None, ws=None):
+    def __init__(self, http=None, ws=None, **additional):
         self._http = http
         self._ws = ws
+        self._additional = dict(additional)
         self._cookies = None
         self._closed = False
         self._lock = RLock()
@@ -98,6 +99,14 @@ class NetworkBackend:
         """The WebSocket engine, or ``None`` when only requests were assembled."""
         return self._ws
 
+    def engine(self, kind):
+        """Return the engine for a registered role, if one was assembled."""
+        if kind == "http":
+            return self._http
+        if kind == "ws":
+            return self._ws
+        return self._additional.get(kind)
+
     @property
     def cookies(self):
         """The context's cookie jar, which both engines share."""
@@ -106,7 +115,7 @@ class NetworkBackend:
     @cookies.setter
     def cookies(self, jar):
         self._cookies = jar
-        for part in _distinct(self._http, self._ws):
+        for part in _distinct(self._http, self._ws, *self._additional.values()):
             part.cookies = jar
 
     def request_sync(self, request): return self._http_engine().request_sync(request)
@@ -143,9 +152,10 @@ class NetworkBackend:
             if self._closed:
                 return
             self._closed = True
-            http, ws = self._http, self._ws
+            parts = (self._http, self._ws, *self._additional.values())
             self._http = self._ws = None
-        for part in _distinct(http, ws):
+            self._additional.clear()
+        for part in _distinct(*parts):
             try:
                 part.close()
             except Exception:  # one engine failing must not strand the other

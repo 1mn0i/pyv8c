@@ -4,6 +4,7 @@
 here and each global mixes it in; the IDL declarations stay with the interface
 that exposes them.
 """
+import time
 
 from pyv8c import pyv8
 
@@ -15,6 +16,27 @@ from ...foundation.arguments import (
     missing_error,
 )
 from ...foundation.logging import logger
+from ...idl import interface
+
+
+@interface('IdleDeadline', None)
+class IdleDeadline:
+    """The 50 ms idle period Chrome hands a ``requestIdleCallback`` callback.
+
+    ``timeRemaining()`` counts down from the moment the callback was scheduled;
+    it is a real clock reading, not a fixed answer.  ``didTimeout`` is true when
+    the caller supplied a ``timeout`` option and it elapsed.
+    """
+
+    def __init__(self, did_timeout=False, window_ms=50.0, **_):
+        self._did_timeout = bool(did_timeout)
+        self._deadline = time.monotonic() + max(0.0, float(window_ms)) / 1000.0
+
+    def get_didTimeout(self):
+        return self._did_timeout
+
+    def fn_timeRemaining(self, *_extra):
+        return round(max(0.0, (self._deadline - time.monotonic()) * 1000.0), 3)
 
 
 class _SchedulingMixin:
@@ -88,4 +110,4 @@ class _SchedulingMixin:
         logger.debug("{} {}", name, value)
         self._services.task_services.cancel(value)
 
-__all__ = ["_SchedulingMixin"]
+__all__ = ["_SchedulingMixin", "IdleDeadline"]

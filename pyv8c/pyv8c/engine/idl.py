@@ -338,9 +338,9 @@ def _read_file(target, label) -> tuple:
              cache_stat.st_mtime_ns if cache_stat else -1)
     cached = _DOCUMENTS.get(stamp)
     if cached is not None:
-        Idl._last_timings = {"idl_read_ms": 0.0, "idl_decode_ms": 0.0, "idl_cached": True,
-                             "idl_binary_cache": False}
-        return cached
+        timings = {"idl_read_ms": 0.0, "idl_decode_ms": 0.0, "idl_cached": True,
+                   "idl_binary_cache": False}
+        return cached, timings
     started = time.perf_counter_ns()
     raw = _payload(target, cache_target, stat, cache_stat)
     decoded = time.perf_counter_ns()
@@ -365,13 +365,13 @@ def _read_file(target, label) -> tuple:
     found = (label, digest, MappingProxyType(metadata), MappingProxyType(interfaces))
     _DOCUMENTS.clear()
     _DOCUMENTS[stamp] = found
-    Idl._last_timings = {
+    timings = {
         "idl_read_ms": (decoded - started) / 1_000_000,
         "idl_decode_ms": (parsed - decoded) / 1_000_000,
         "idl_cached": False,
         "idl_binary_cache": payload is not None,
     }
-    return found
+    return found, timings
 
 
 def _read_document(document) -> tuple:
@@ -520,9 +520,6 @@ class Idl:
     that document through the same profile, so a second Browser reuses the whole lookup face.
     """
 
-    #: The cost of the last :meth:`load`, for the startup report.
-    _last_timings: dict[str, float] = {}
-
     def __init__(self, path, digest, metadata, interfaces, profile=None, order_profile=None):
         self.path = path
         self.digest = digest
@@ -551,7 +548,7 @@ class Idl:
         self._aliases: dict[str, str] | None = None
 
     @classmethod
-    def load(cls, path=None, profile=_SHIPPED) -> "Idl":
+    def load(cls, path=None, profile=_SHIPPED, *, timings=None) -> "Idl":
         """The document at *path*, narrowed by *profile*: the shipped one unless told otherwise."""
         if path is None:
             target = DEFAULT_IDL_PATH
@@ -561,7 +558,9 @@ class Idl:
             label = str(target)
         if not target.is_file():
             raise FileNotFoundError(f"the IDL document does not exist: {target}")
-        label, digest, metadata, interfaces = _read_file(target, label)
+        (label, digest, metadata, interfaces), load_timings = _read_file(target, label)
+        if timings is not None:
+            timings.update(load_timings)
         chosen = Profile.load() if profile is _SHIPPED else profile
         observation = chosen
         if chosen is not None and chosen.against and chosen.against != digest:

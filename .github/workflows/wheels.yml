@@ -15,6 +15,10 @@ on:
         description: Build and test macOS arm64
         type: boolean
         default: true
+      angle:
+        description: Run experimental ANGLE rendering tests
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -156,6 +160,17 @@ jobs:
       - name: Verify installed wheels outside checkout
         working-directory: ${{ runner.temp }}
         run: python -I "${{ github.workspace }}/tools/smoke_wheels.py"
+      - name: Test experimental ANGLE backend
+        if: ${{ inputs.angle && matrix.python == '3.12' }}
+        shell: pwsh
+        working-directory: ${{ runner.temp }}
+        run: |
+          python -m pip install 'comfy-angle==0.1.1' pytest pytest-timeout
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $env:PYV8C_ANGLE_DIR = python -c "import comfy_angle; print(comfy_angle.get_lib_dir())"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m pytest "${{ github.workspace }}/pyv8c/tests/integration/test_angle_context.py" -q
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
   linux-build:
     if: ${{ inputs.linux }}
@@ -207,6 +222,15 @@ jobs:
         shell: bash
         working-directory: ${{ runner.temp }}
         run: python -I "$GITHUB_WORKSPACE/tools/smoke_wheels.py"
+      - name: Test experimental ANGLE backend
+        if: ${{ inputs.angle }}
+        shell: bash
+        working-directory: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          python -m pip install 'comfy-angle==0.1.1'
+          export PYV8C_ANGLE_DIR="$(python -c 'import comfy_angle; print(comfy_angle.get_lib_dir())')"
+          python -m pytest "$GITHUB_WORKSPACE/pyv8c/tests/integration/test_angle_context.py" -q
       - uses: actions/upload-artifact@v4
         with:
           name: linux-wheels
@@ -275,6 +299,15 @@ jobs:
       - name: Verify installed wheel outside checkout
         working-directory: ${{ runner.temp }}
         run: python -I "$GITHUB_WORKSPACE/tools/smoke_wheels.py"
+      - name: Test experimental ANGLE backend
+        if: ${{ inputs.angle }}
+        shell: bash
+        working-directory: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          python -m pip install 'comfy-angle==0.1.1'
+          export PYV8C_ANGLE_DIR="$(python -c 'import comfy_angle; print(comfy_angle.get_lib_dir())')"
+          python -m pytest "$GITHUB_WORKSPACE/pyv8c/tests/integration/test_angle_context.py" -q
       - name: Upload wheel
         uses: actions/upload-artifact@v4
         with:

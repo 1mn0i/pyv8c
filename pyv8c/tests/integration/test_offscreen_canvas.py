@@ -5,6 +5,34 @@ from loguru import logger
 from pyv8c import Browser
 
 
+def test_bitmap_uses_live_image_data_and_offscreen_webgl_encodes():
+    pytest.importorskip('PIL')
+    browser = Browser(real_network=False, stub_logging='off')
+    try:
+        page = browser.new_profile().new_page()
+        page.evaluate('''(() => {
+          const c = document.createElement('canvas'); c.width = c.height = 1;
+          const ctx = c.getContext('2d'); const data = ctx.createImageData(1, 1);
+          data.data.set([255, 0, 0, 255]); window.bitmapResult = 'pending';
+          createImageBitmap(data).then(bitmap => {
+            ctx.drawImage(bitmap, 0, 0);
+            window.bitmapResult = Array.from(ctx.getImageData(0, 0, 1, 1).data);
+          });
+          const offscreen = new OffscreenCanvas(1, 1);
+          const gl = offscreen.getContext('webgl'); gl.clearColor(1, 0, 0, 1); gl.clear(gl.COLOR_BUFFER_BIT);
+          window.blobResult = 'pending';
+          offscreen.convertToBlob().then(blob => window.blobResult = [blob.type, blob.size > 0]);
+          window.emptyResult = 'pending';
+          new OffscreenCanvas(0, 1).convertToBlob().catch(e => window.emptyResult = e.name);
+        })()''')
+        page.run_until_idle(timeout=2)
+        assert page.evaluate('window.bitmapResult') == [255, 0, 0, 255]
+        assert page.evaluate('window.blobResult') == ['image/png', True]
+        assert page.evaluate('window.emptyResult') == 'IndexSizeError'
+    finally:
+        browser.close()
+
+
 def test_an_offscreen_canvas_draws_and_reports_its_pixels():
     pytest.importorskip("PIL", reason="Pillow backs the canvas drawing surface")
     browser = Browser(stub_logging="off")

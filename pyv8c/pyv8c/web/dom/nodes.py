@@ -427,6 +427,10 @@ class Node(EventTarget):
             position = index if index >= 0 else max(len(self._children) + index, 0)
             position = min(position, len(self._children))
             self._children.insert(position, node)
+        for inserted in (node, *_subtree_nodes(node)):
+            callback = getattr(inserted, '_on_tree_inserted', None)
+            if callback is not None:
+                callback()
         _bump_style_version(node)
         services = getattr(self, "_services", None)
         document_services = getattr(services, "document_services", None)

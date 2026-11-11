@@ -3,6 +3,7 @@ import base64
 from urllib.parse import unquote_to_bytes
 from ...foundation.environment import extension_resource
 from ...foundation.host_errors import LoadFailure
+from ...foundation.logging import logger
 from ...web.fetch.response import Response
 
 #: how the load completes (an image completes as one so its element answers for the size).
@@ -59,14 +60,16 @@ def extension_response(page, target, request):
     """The response for a resource this browser's extensions expose, or ``None``.
 
     Chrome answers one locally, in the file's own kind, and a page whose origin the
-    extension's ``matches`` names reads it without a CORS check; a page cannot navigate
-    to one, which is the only place the answer differs from a network response.
+    extension's ``matches`` names reads it without a CORS check. This framework has
+    declarations but not extension files: the returned contents are placeholders,
+    not the extension's actual resources.
     """
     resource = extension_resource(page.environment, target, source_url=page.url)
     if resource is None:
         return None
     if str(request.get("mode", "")) == "navigate" and not request.get("browser_initiated"):
         return None
+    logger.warning("extension resource is a placeholder, not extension content: {}", target)
     content_type = EXTENSION_TYPES.get(resource.rsplit(".", 1)[-1].lower(), "application/octet-stream")
     if content_type == "image/svg+xml":
         body = _EXTENSION_SVG

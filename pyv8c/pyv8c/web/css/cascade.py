@@ -95,6 +95,8 @@ def _cascade(element, rules, cache=None):
     if cache is not None and element in cache:
         return cache[element]
     values = initial_values_for(element)
+    if 'hidden' in element.attributes and str(element.attributes.get('hidden', '')).lower() != 'until-found':
+        values['display'] = 'none'
     parent = getattr(element, "parentElement", None)
     if parent is None:
         root = element.root_node()
@@ -240,6 +242,9 @@ def _cascade(element, rules, cache=None):
                 resolved_any = True
         if resolved_any:
             values[name] = ' '.join(terms)
+    if getattr(element, '_animations', None):
+        from ..dom.animation import animated_style
+        animated_style(element, values)
     if cache is not None:
         cache[element] = values
     return values

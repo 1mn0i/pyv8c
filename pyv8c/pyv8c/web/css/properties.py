@@ -185,6 +185,10 @@ INITIAL_VALUES = {
     "word-spacing": "normal", "box-sizing": "content-box",
     "color": "rgb(0, 0, 0)", "white-space": "normal",
     "word-break": "normal", "overflow-wrap": "normal", "text-align": "start",
+    # CSS initial values Chrome reports through getComputedStyle even when no
+    # author declaration exists.  Without them the cascade answers "" (phase 9
+    # parity: direction ltr, opacity 1, zoom 1).
+    "direction": "ltr", "opacity": "1", "zoom": "1",
 }
 
 

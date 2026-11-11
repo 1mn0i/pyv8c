@@ -15,7 +15,8 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, fields as dataclass_fields, is_dataclass
 from pathlib import Path
 from types import MappingProxyType
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
+import posixpath
 
 from .system_fonts import FontRecord
 from .urls import origin_tuple
@@ -155,7 +156,10 @@ def extension_resource(environment, url, *, source_url=""):
     parts = urlsplit(str(url))
     if parts.scheme.lower() != "chrome-extension":
         return None
-    path = (parts.path or "/").lstrip("/")
+    decoded = unquote(parts.path or "/")
+    if "\x00" in decoded or "\\" in decoded:
+        return None
+    path = posixpath.normpath("/" + decoded.lstrip("/")).lstrip("/")
     for entry in declared.get((parts.hostname or "").lower(), ()):
         if source_url and not any(_source_matches(pattern, source_url) for pattern in entry["matches"]):
             continue

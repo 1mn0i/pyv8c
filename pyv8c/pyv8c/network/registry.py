@@ -16,8 +16,9 @@ from typing import Any, Protocol, runtime_checkable
 from .cookies import CookieJar
 from .models import NetworkRequest, NetworkResponse, NetworkUnavailableError, RequestHandle
 
-#: The two kinds of engine a context assembles, in the order users read them.
-KINDS: tuple[str, str] = ("http", "ws")
+#: Engine kind and the method a ready implementation must expose.
+KIND_METHODS = {"http": "request_sync", "ws": "websocket"}
+KINDS = tuple(KIND_METHODS)
 
 
 @runtime_checkable

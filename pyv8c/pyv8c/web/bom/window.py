@@ -704,7 +704,7 @@ class Window(_SchedulingMixin, WindowProperties):
                               screen_width=screen.width, screen_height=screen.height,
                               dpr=self.devicePixelRatio, color_depth=screen.color_depth)
     def fn_createImageBitmap(self, image=MISSING, *arguments):
-        from ..graphics.canvas import create_image_bitmap
+        from ..graphics.canvas.bitmap import create_image_bitmap
         return create_image_bitmap('Window', image, arguments, getattr(self, '_services', None))
 
     def fn_fetch(self, request=MISSING, options=None, *_extra):
@@ -796,6 +796,36 @@ class Window(_SchedulingMixin, WindowProperties):
         self._services.realm_services.materialize_interface("DOMFileSystem")
         from .filesystem import request_file_system
         return request_file_system(self, type, size, success, error)
+
+    def fn_requestIdleCallback(self, callback=MISSING, options=pyv8.Undefined, *_extra):
+        """Run one idle callback later, with a real ``IdleDeadline``.
+
+        The callback must never run synchronously: it goes through the same
+        owner-task HTML timer queue as ``setTimeout``.  This member used to be
+        an ``Undefined`` stub, so the SDK never received an idle deadline.
+        """
+        if callback is MISSING:
+            raise missing_error("Window", "requestIdleCallback", 1, 0,
+                                constructor=False)
+        from ...foundation.arguments import callback_value, integer
+        from .scheduling import IdleDeadline
+        fn = callback_value(callback)
+        settings = ({} if is_nullish(options) or options is MISSING
+                    or not isinstance(options, (dict, pyv8.JSObject))
+                    else dictionary(options))
+        timeout = integer(settings.get('timeout', 0)) if 'timeout' in settings else None
+        import time
+        scheduled = time.monotonic()
+        def run_idle():
+            expired = timeout is not None and (time.monotonic() - scheduled) * 1000 >= timeout
+            fn(IdleDeadline(did_timeout=expired, window_ms=0 if expired else 50))
+        return self._services.task_services.schedule_html_timer(
+            run_idle, 0.001, repeat=False)
+
+    def fn_cancelIdleCallback(self, ident=MISSING, *_extra):
+        from ...foundation.arguments import integer
+        value = 0 if ident is MISSING else int(integer(ident, signed=True))
+        self._services.task_services.cancel(value)
 
     def fn_getComputedStyle(self, element=MISSING, pseudo=pyv8.Undefined, *_extra):
         if element is MISSING:

@@ -3,12 +3,12 @@ Nothing decodes here, so the classes report what a fresh element reports."""
 from pyv8c import pyv8
 
 from ...idl import interface
-from ...foundation.arguments import MISSING, boolean, dom_string, missing_error, number
+from ...foundation.arguments import MISSING, boolean, dom_string, integer, missing_error, number
 from ..page_errors import dom_exception
 from ..dom.events import EventTarget
-from .elements import HTMLElement, _set_url_value, _url_value
 from ..media.source import can_play_type, media_facts
-
+from .elements import HTMLElement
+from .utils import set_url_value, url_value
 
 #: The loose table and the codec parser live with the strict one, so the two questions cannot
 #: drift apart; see :mod:`media_source`.
@@ -58,9 +58,9 @@ class HTMLMediaElement(HTMLElement):
         if boolean(value): self.attributes[name] = ""
         else: self.attributes.pop(name, None)
 
-    def get_src(self): return _url_value(self, "src")
+    def get_src(self): return url_value(self, "src")
     def set_src(self, value):
-        _set_url_value(self, "src", value)
+        set_url_value(self, "src", value)
         self._restart_resource()
     def _attribute_changed_here(self, name, old, new):
         super()._attribute_changed_here(name, old, new)
@@ -123,6 +123,41 @@ class HTMLAudioElement(HTMLMediaElement):
 
 @interface('HTMLVideoElement', 'HTMLMediaElement')
 class HTMLVideoElement(HTMLMediaElement):
-    pass
+    """The video-only faces the IDL declares.
+
+    Nothing decodes here, so the intrinsic size is ``0`` -- Chromium answers
+    ``0`` until a frame is available.  ``width``/``height`` are the reflected
+    unsigned-long content attributes (an absent one reads back ``0``, and a
+    negative assignment stores ``0`` rather than wrapping).  The remaining
+    members are ordinary reflected string/boolean content attributes.
+    """
+
+    def get_videoWidth(self): return 0
+    def get_videoHeight(self): return 0
+
+    def _dimension(self, name):
+        digits = ""
+        for character in str(self.attributes.get(name, "")).strip():
+            if character not in "0123456789":
+                break
+            digits += character
+        return int(digits) if digits else 0
+
+    def _set_dimension(self, name, value):
+        self.attributes[name] = str(max(0, integer(value, signed=True)))
+
+    def get_width(self): return self._dimension("width")
+    def set_width(self, value): self._set_dimension("width", value)
+    def get_height(self): return self._dimension("height")
+    def set_height(self, value): self._set_dimension("height", value)
+
+    def get_poster(self): return url_value(self, "poster")
+    def set_poster(self, value): set_url_value(self, "poster", value)
+    def get_playsInline(self): return self._flag("playsinline")
+    def set_playsInline(self, value): self._set_flag("playsinline", value)
+    def get_disablePictureInPicture(self):
+        return self._flag("disablepictureinpicture")
+    def set_disablePictureInPicture(self, value):
+        self._set_flag("disablepictureinpicture", value)
 
 __all__ = ["TimeRanges", "TextTrackList", "HTMLMediaElement", "HTMLAudioElement", "HTMLVideoElement"]

@@ -18,7 +18,8 @@ from ...foundation.arguments import (
 from ..page_errors import IndexSizeError, InvalidStateError, NotSupportedError, PageTypeError
 from ..dom.collections import HTMLCollection, HTMLOptionsCollection, NodeList
 from ..dom.element import Element
-from .elements import HTMLElement, _set_url_value, _url_value
+from .elements import HTMLElement
+from .utils import form_owner, set_url_value, url_value
 
 
 def _signed_long(value):
@@ -29,25 +30,20 @@ def _signed_long(value):
 
 @interface('HTMLTextAreaElement', 'HTMLElement')
 class HTMLTextAreaElement(HTMLElement):
-    """``<textarea>``: ``defaultValue`` is its raw value, the child text.  The live
-    ``value`` is not modelled yet, so the raw value is what a page reads and writes."""
+    """A textarea with independent default and live values."""
 
     def get_name(self): return self._attr("name")
     def set_name(self, value): self._set_string("name", value)
     def get_form(self): return self._find_form()
     def _find_form(self):
-        document = getattr(getattr(self._services, "document_services", None), "document", None)
-        form_id = self.attributes.get("form")
-        if form_id and document is not None:
-            owner = document.fn_getElementById(form_id)
-            if getattr(owner, "localName", None) == "form": return owner
-        node = self.parentElement
-        while isinstance(node, Element):
-            if node.localName == "form": return node
-            node = node.parentElement
-        return pyv8.Null
+        return form_owner(self) or pyv8.Null
     def get_defaultValue(self): return str(self.get_textContent())
     def set_defaultValue(self, value): self.set_textContent(str(dom_string(value)))
+    def get_value(self):
+        return self._raw_value if getattr(self, '_dirty_value', False) else self.get_defaultValue()
+    def set_value(self, value):
+        self._raw_value = str(dom_string(value)).replace('\r\n', '\n').replace('\r', '\n')
+        self._dirty_value = True
     def get_maxLength(self):
         """``-1`` for an attribute that is missing, unparseable or negative."""
         try:
@@ -91,11 +87,20 @@ class HTMLOptionElement(HTMLElement):
         single-select's first option (the reset parsing runs, without storing it)."""
         explicit = self._explicit_state()
         if explicit is not None:
+            select = self._select_ancestor()
+            if explicit and select is not None and 'multiple' not in select.attributes:
+                options = select._options()
+                return not any(other._explicit_state() is True for other in options[options.index(self) + 1:])
             return explicit
         select = self._select_ancestor()
         return select._selects_first_option(self) if select is not None else False
     def set_selected(self, value):
         self._selected_state = boolean(value)
+        select = self._select_ancestor()
+        if self._selected_state and select is not None and 'multiple' not in select.attributes:
+            for option in select._options():
+                if option is not self:
+                    option._selected_state = False
     def get_defaultSelected(self): return "selected" in self.attributes
     def set_defaultSelected(self, value):
         if boolean(value): self.attributes["selected"] = ""
@@ -127,16 +132,7 @@ class HTMLSelectElement(HTMLElement):
     def get_name(self): return self._attr("name")
     def set_name(self, value): self._set_string("name", value)
     def get_form(self):
-        form_id = self.attributes.get("form")
-        document = getattr(getattr(self._services, "document_services", None), "document", None)
-        if form_id and document is not None:
-            owner = document.fn_getElementById(form_id)
-            if getattr(owner, "localName", None) == "form": return owner
-        node = self.parentElement
-        while isinstance(node, Element):
-            if node.localName == "form": return node
-            node = node.parentElement
-        return pyv8.Null
+        return form_owner(self) or pyv8.Null
     def get_options(self):
         value = getattr(self, "_options_collection", None)
         if value is None:
@@ -347,9 +343,31 @@ class HTMLInputElement(HTMLElement):
         self.set_value(self._format_value(self.get_type(), milliseconds))
 
     def get_checked(self): return self._checked
+    def _on_tree_inserted(self):
+        if self._checked and self.get_type() == 'radio':
+            dirty = self._dirty_checked
+            self.set_checked(True)
+            self._dirty_checked = dirty
+
+    def _attribute_changed_here(self, name, old, new):
+        super()._attribute_changed_here(name, old, new)
+        if name == 'checked' and not self._dirty_checked:
+            self._checked = new is not None
+        if name in ('checked', 'name', 'type', 'form') and self._checked:
+            self._on_tree_inserted()
+
     def set_checked(self, value):
         self._dirty_checked = True
         self._checked = boolean(value)
+        if self._checked and self.get_type() == 'radio':
+            name = self._attr('name')
+            if name:
+                owner = self._form_owner()
+                for other in self.root_node()._descendants():
+                    if (other is not self and isinstance(other, HTMLInputElement)
+                            and other.get_type() == 'radio' and other._attr('name') == name
+                            and other._form_owner() is owner):
+                        other._checked = False
     def get_defaultChecked(self): return "checked" in self.attributes
     def set_defaultChecked(self, value):
         value = boolean(value)
@@ -399,8 +417,8 @@ class HTMLInputElement(HTMLElement):
     def set_readOnly(self, value): self._set_bool("readonly", value)
     def get_required(self): return self._bool("required")
     def set_required(self, value): self._set_bool("required", value)
-    def get_src(self): return _url_value(self, "src")
-    def set_src(self, value): _set_url_value(self, "src", value)
+    def get_src(self): return url_value(self, "src")
+    def set_src(self, value): set_url_value(self, "src", value)
     def get_step(self): return self._attr("step")
     def set_step(self, value): self._set_string("step", value)
     def get_align(self): return self._attr("align")
@@ -424,15 +442,7 @@ class HTMLInputElement(HTMLElement):
         owner = self._form_owner()
         return owner if owner is not None else pyv8.Null
     def _form_owner(self):
-        form_id = self.attributes.get("form")
-        if form_id and self._services:
-            found = self._services.document_services.document.fn_getElementById(form_id)
-            if isinstance(found, Element) and found.localName == "form": return found
-        node = self.parentElement
-        while isinstance(node, Element):
-            if node.localName == "form": return node
-            node = node.parentElement
-        return None
+        return form_owner(self)
     def get_list(self):
         list_id = self.attributes.get("list")
         if not list_id or not self._services: return pyv8.Null
@@ -741,7 +751,7 @@ class HTMLInputElement(HTMLElement):
         if kind in ("checkbox", "radio"):
             self._dirty_checked = True
             if getattr(event, "_activation_prepared", None) is not self:
-                self._checked = not self._checked if kind == "checkbox" else True
+                self.set_checked(not self._checked if kind == "checkbox" else True)
             from ..dom.events import Event
             for event_type, bubbles in (("input", False), ("change", True)):
                 event = Event(event_type, {"bubbles": bubbles, "cancelable": False})

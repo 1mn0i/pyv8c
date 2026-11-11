@@ -354,6 +354,9 @@ class WebSocketsTransport:
         return (frozenset(named) - _MANAGED_KEYS) | _BRIDGE_KEYS
 
     def __init__(self, *, options=None):
+        # Fail during backend construction instead of turning a missing client
+        # into an asynchronous WebSocket close event.
+        _connect_client()
         self.options = dict(options or {})
         self.cookies = None
         self._sockets = set()

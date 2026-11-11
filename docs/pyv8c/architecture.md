@@ -23,6 +23,11 @@
 
 DOM 目录保存节点树与 DOM 接口。文本编码、权限策略与 AI 接口位于 `pyv8c/pyv8c/web/` 的相应模块；媒体能力位于 `web/media/`，Canvas 绘图接口和 WebGL 位于 `web/graphics/`；设备运动与方向事件位于 `pyv8c/pyv8c/web/bom/motion.py`。这些模块由 Feature 注册表组合，不因页面调用就归入 DOM。
 
+`web/graphics/canvas/` 按 2D 上下文、位图、颜色、渐变、编码、文本和离屏 Canvas 分工；
+`web/graphics/webgl/` 分别保存上下文、对象、扩展、常量与渲染后端。WebGL 上下文通过
+`backends/protocol.py` 定义的操作调用模拟或 ANGLE 后端，ANGLE 的 EGL 上下文由对应页面
+在所属线程释放。HTMLCanvasElement 仍属于 `web/html/`，它直接使用上述实现模块。
+
 | 目录或模块 | 主要职责 |
 | --- | --- |
 | `web/dom/` | DOM 节点、文档、事件和布局 |

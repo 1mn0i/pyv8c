@@ -15,6 +15,7 @@
 ## 自定义加载器
 
 加载器签名为 `loader(url, request)`，可返回 Web Response、响应字典或可转换的内容。返回空值不会自动回退真实网络。
+不支持的 URL scheme 不会交给加载器。`chrome-extension:` 只处理环境档案中声明且匹配的资源；当前项目不包含扩展文件，返回的是占位内容并记录警告，不能将其视为真实扩展资源。
 
 ```python
 from pyv8c import Browser

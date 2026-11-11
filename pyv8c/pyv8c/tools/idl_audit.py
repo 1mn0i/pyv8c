@@ -177,6 +177,22 @@ def _shipped_bindings():
     return Bindings(Idl.load(), runtime=bootstrap_runtime())
 
 
+def interface_coverage(bindings):
+    """Compare explicitly registered feature interfaces with the selected IDL."""
+    baseline = set(bindings.idl.names())
+    declared = set(bindings.runtime.catalog.interfaces)
+    # Loading each feature also validates its implementation against its declaration.
+    for spec in bindings.runtime.catalog.specs.values():
+        bindings.runtime.load(spec.name)
+    implemented = set(bindings.runtime.implementations)
+    return {
+        'baseline_count': len(baseline),
+        'implemented_in_baseline': sorted(baseline & implemented),
+        'baseline_without_implementation': sorted(baseline - implemented),
+        'declared_without_baseline': sorted(declared - baseline),
+    }
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--list", dest="listed", nargs="*", action="extend", default=[],
@@ -185,9 +201,18 @@ def main(argv=None):
     parser.add_argument("--fields", action="store_true", help="histogram the fields that differ")
     parser.add_argument("--json", metavar="PATH", help="write the report for a guard test to freeze")
     parser.add_argument("--limit", type=int, default=None, help="keep the first N rows per bucket")
+    parser.add_argument("--coverage", action="store_true", help="report feature interface coverage of the IDL")
     args = parser.parse_args(argv)
 
-    report = audit(_shipped_bindings(), limit=args.limit)
+    bindings = _shipped_bindings()
+    report = audit(bindings, limit=args.limit)
+    if args.coverage:
+        coverage = interface_coverage(bindings)
+        report['interface_coverage'] = coverage
+        print(f"  IDL interfaces: {coverage['baseline_count']}; implemented: "
+              f"{len(coverage['implemented_in_baseline'])}; without implementation: "
+              f"{len(coverage['baseline_without_implementation'])}")
+        print(f"  Declared without baseline: {coverage['declared_without_baseline']}")
     print(summarise(report))
     print(f"  {'declared':<12} {report['declared']} across {report['specs']} specs")
     if args.fields:

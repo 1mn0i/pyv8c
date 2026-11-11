@@ -37,13 +37,13 @@ pyv8 更关注 Chromium-like 构造器、原型链、属性描述符、intercept
 | 默认 V8 | `15.4.68`（Windows 构建及相关回归已验证） |
 | Temporal | 随 V8 构建启用（`v8_enable_temporal_support=true`） |
 | Windows | 主要开发和完整测试平台 |
-| Linux/macOS | 包含构建分支，需要在目标平台编译并验证 V8 产物 |
+| Linux/macOS | CI 分别构建 Linux x64 和 macOS arm64 wheel；具体结果以工作流运行记录为准 |
 | 多 Isolate | 支持，JS 句柄不能跨 Isolate 使用 |
 | subinterpreter | 不支持 |
 | free-threaded CPython | 不支持 |
 
 V8 的 C++ API 会随版本变化。绑定要求 V8 15.4 或更新版本；构建器可以下载正式数字 tag，
-但更换版本后需要重新验证构建和绑定代码；`15.4.68` 已完成 Windows 构建和相关回归，其他平台仍需验证。若存在本地
+但更换版本后需要重新验证构建和绑定代码。若存在本地
 `.pyv8-version`，它会覆盖 `V8_VERSION` 中的默认值。
 
 Windows 上启用 Temporal 时，扩展用 V8 自带的 `clang-cl`/`lld-link` 构建，并按
@@ -119,9 +119,9 @@ IDL 映射统一使用 C++ 定义的 `pyv8.IdlSpec`，完整字段与 realm 装�
 
 ## 安装
 
-Windows x64 的发行 wheel 由仓库的 `Windows wheels` GitHub Actions 工作流构建；工作流生成包含原生引擎和框架的单个 `pyv8c` wheel，不发布 PyPI。引擎的公开入口为 `from pyv8c import pyv8`。它使用 `V8_VERSION` 指定的 V8 版本，并在 CPython 3.12–3.15 上分别安装、验证同一份 ABI3 wheel。Linux 和 macOS 的发行构建尚未配置。
+仓库的 `Build wheels` GitHub Actions 工作流分别构建 Windows x64、Linux x64 和 macOS arm64 wheel，并在 CPython 3.12–3.15 上测试各平台的 ABI3 wheel；各次运行结果以 Actions 日志为准。wheel 包含原生引擎和框架，引擎的公开入口为 `from pyv8c import pyv8`。
 
-维护者可在 GitHub Actions 手动运行该工作流，并从运行记录下载 `windows-wheels` artifact；正式发布流程尚未配置。
+维护者可在 GitHub Actions 手动运行该工作流，并从运行记录下载各平台 artifact。
 
 仓库不跟踪 `_pyv8` 二进制和 `icudtl.dat`；后者仍随每个 wheel 提供，并须与构建所用 V8 匹配。Windows 工作流缓存 V8 头文件、构建输出及配套 LLVM 工具链；首次运行、缓存失效或缓存被 GitHub 清理后仍需下载并编译 V8。缓存键包含 V8 版本、构建脚本、运行器镜像、CPU 架构和 Windows SDK 版本，改变这些输入会重新构建。缓存受 GitHub 的存储配额及保留策略限制，保存失败不会让已经完成的 wheel 构建失败。
 
@@ -138,11 +138,14 @@ python -m pip install path/to/pyv8c-0.1.0-cp312-abi3-win_amd64.whl
 
 ### 从源码构建
 
-以下命令从仓库根目录执行。先安装 Python 构建工具：
+以下命令从仓库根目录执行。构建原生扩展和 wheel 需要 **CPython 3.12**；生成的 `cp312-abi3` wheel 可在同平台、同架构的启用 GIL 的 CPython 3.12–3.15 上运行。先使用 Python 3.12 安装构建工具：
 
 ```bash
+python pyv8/bootstrap.py
 python -m pip install --upgrade pip setuptools wheel build tox
 ```
+
+前置检查验证 Python 和 Git，不下载任何文件；各平台的编译器、SDK 和 V8 依赖仍由后续构建步骤检查。构建完整发行包时，根目录构建流程会单独校验随包 IDL 的版本。常用配置示例见 [build.env.example](build.env.example)。
 
 选择并准备 V8：
 
@@ -175,14 +178,11 @@ python setup.py build_v8 --select --proxy=http://127.0.0.1:7890
 python312 -m build --wheel
 ```
 
-Windows 构建 V8 `15.4.68` 时，可以显式设置工具链路径：
+Windows 需要安装 Visual Studio C++ 构建工具和 Windows SDK。自动发现不符合本机环境时，可以按实际安装位置设置路径：
 
 ```powershell
-$env:PYV8_V8_VERSION = "15.4.68"
-$env:PYV8_VS_HOME = "D:\soft\Microsoft\vs2026"
-$env:PYV8_VS_VERSION = "2026"
-$env:PYV8_WINDOWS_SDK = "D:\Windows Kits\10"
-$env:PYV8_BUILD_ROOT = "D:\src\pyv8env\pyv8c\pyv8\.pyv8-build"
+$env:PYV8_VS_HOME = "<Visual Studio 安装目录>"
+$env:PYV8_WINDOWS_SDK = "<Windows SDK 安装目录>"
 $env:DEPOT_TOOLS_WIN_TOOLCHAIN = "0"
 python setup.py build_v8
 python setup.py build_ext --inplace

@@ -18,6 +18,13 @@ def bindings():
     return Bindings(Idl.load(), runtime=bootstrap_runtime(), stub_logging="off")
 
 
+def test_generated_classes_are_stable_per_bindings_and_isolated_between_bindings(bindings):
+    other = Bindings(Idl.load(), runtime=bootstrap_runtime(), stub_logging="off")
+    first = bindings.class_for("AbsoluteOrientationSensor")
+    assert bindings.class_for("AbsoluteOrientationSensor") is first
+    assert other.class_for("AbsoluteOrientationSensor") is not first
+
+
 def test_an_unconfigured_bindings_keeps_no_override_table(bindings):
     """Unconfigured hooks cost nothing per member: the binder holds no table at all."""
     assert not bindings.overrides

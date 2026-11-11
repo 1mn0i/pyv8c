@@ -737,6 +737,9 @@ class Page:
         # Drop cached JS scripts before the V8 context goes away.
         self.scripts.clear_js_helpers()
         self.scripts.reset()
+        angle = self.services.graphics_backend
+        if angle is not None:
+            attempt(angle.close_page, self.services)
         attempt(self.services.task_services.cancel_animation_frames)
         attempt(self.net.close)
         attempt(self.tasks.close)

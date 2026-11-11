@@ -6,21 +6,19 @@ legacy object in Chromium, so their handlers and ``RadioNodeList`` live here.
 from typing import NamedTuple
 
 from pyv8c import pyv8
-
 from ...idl import interface
 from ...foundation.arguments import boolean, dom_string
 from ..page_errors import LegacyPropertyError, PageTypeError
 from ..dom.collections import DOMTokenList, HTMLFormControlsCollection, HYPERLINK_REL_TOKENS, NodeList
 from ..dom.element import Element
-from .elements import HTMLElement, _document_url, _set_url_value, _url_value
+from .elements import HTMLElement
+from .utils import document_url, form_owner, set_url_value, url_value
 from ..dom.utils import crlf, encode_entries, replace_query, urlencoded
 
 
 @interface("RadioNodeList", "NodeList")
 class RadioNodeList(NodeList):
     """The live collection returned for duplicate form names."""
-
-        #: A ``NodeList``, so it publishes what one does; stated rather than inherited.
 
     def get_value(self):
         for item in self._items():
@@ -62,15 +60,23 @@ class Submission(NamedTuple):
 
 def submission(form, submitter=None):
     """The request this form's submission makes, or ``None`` for ``method=dialog``."""
-    method = form.get_method()
+    attrs = submitter.attributes if submitter is not None else {}
+    method = str(attrs.get('formmethod', form.get_method())).lower()
+    if method not in ('get', 'post', 'dialog'):
+        method = 'get'
+    action = url_value(submitter, 'formaction') if 'formaction' in attrs else form.get_action()
+    action = action or document_url(form).split('#', 1)[0]
+    enctype = str(attrs.get('formenctype', form.get_enctype())).lower()
+    if enctype not in ('application/x-www-form-urlencoded', 'multipart/form-data', 'text/plain'):
+        enctype = 'application/x-www-form-urlencoded'
     if method == "dialog":
         return None
     entries = entry_list(form, submitter)
     if method == "get":
-        return Submission(replace_query(form.get_action(), urlencoded(entries)),
+        return Submission(replace_query(action, urlencoded(entries)),
                           "GET", None, None)
-    body, content_type = encode_entries(entries, form.get_enctype())
-    return Submission(form.get_action(), "POST", body, content_type)
+    body, content_type = encode_entries(entries, enctype)
+    return Submission(action, "POST", body, content_type)
 
 
 def entry_list(form, submitter=None):
@@ -154,8 +160,8 @@ class HTMLFormElement(HTMLElement):
     def get_action(self):
         """The submission URL: the document's own URL, without its fragment, when
         the attribute is absent."""
-        return _url_value(self, "action") or _document_url(self).split("#", 1)[0]
-    def set_action(self, value): _set_url_value(self, "action", value)
+        return url_value(self, "action") or document_url(self).split("#", 1)[0]
+    def set_action(self, value): set_url_value(self, "action", value)
 
     def get_acceptCharset(self): return self.attributes.get("accept-charset", "")
     def set_acceptCharset(self, value): self.attributes["accept-charset"] = str(dom_string(value))
@@ -195,15 +201,7 @@ class HTMLFormElement(HTMLElement):
     def set_target(self, value): self.attributes["target"] = str(dom_string(value))
     def _owns(self, node):
         """Whether this form is ``node``'s form owner."""
-        if "form" in node.attributes:
-            form_id = str(node.attributes.get("form", "")).strip()
-            lookup = getattr(self.root_node(), "fn_getElementById", None)
-            owner = lookup(form_id) if lookup is not None and form_id else None
-            return owner is self
-        for ancestor in node._ancestors():
-            if isinstance(ancestor, HTMLFormElement):
-                return ancestor is self
-        return False
+        return form_owner(node) is self
     def _controls(self):
         return [node for node in self.root_node()._descendants()
                 if _is_listed_element(node) and self._owns(node)]
@@ -322,7 +320,8 @@ class HTMLFormElement(HTMLElement):
         A clicked button, ``requestSubmit()`` and ``submit()`` all end here;
         *submitter* joins the entries and *user_activated* becomes ``Sec-Fetch-User``.
         """
-        if validate and not self.get_noValidate() and not self._check_validity(report=True):
+        skip_validation = submitter is not None and 'formnovalidate' in submitter.attributes
+        if validate and not self.get_noValidate() and not skip_validation and not self._check_validity(report=True):
             return False
         if fire_event:
             from ..dom.events import Event
@@ -357,12 +356,18 @@ class HTMLFormElement(HTMLElement):
             if isinstance(control, HTMLInputElement):
                 control._dirty_value = False
                 control._raw_value = ""
+                control.set_checked("checked" in control.attributes)
                 control._dirty_checked = False
-                control._checked = "checked" in control.attributes
             elif isinstance(control, HTMLTextAreaElement):
                 control._dirty_value = False
             elif isinstance(control, HTMLSelectElement):
-                control.set_selectedIndex(control.get_selectedIndex())
+                options = control._options()
+                for option in options:
+                    option._selected_state = None
+                if 'multiple' not in control.attributes:
+                    selected = [option for option in options if option.get_defaultSelected()]
+                    if selected:
+                        selected[-1].set_selected(True)
         return pyv8.Undefined
 
 __all__ = ["HTMLFormElement", "RadioNodeList"]

@@ -119,6 +119,53 @@ class _AttributeMap(dict):
 class Element(_ParentNodeMixin, _ChildNodeMixin, _NonDocumentTypeChildNodeMixin, Node):
     """Base implementation for HTML and XML elements."""
 
+    def fn_checkVisibility(self, options=pyv8.Undefined, *_extra):
+        """Whether this element is rendered, as Chrome's ``checkVisibility`` answers it.
+
+        A detached node, ``display:none``, ``visibility:hidden/collapse`` or the
+        ``hidden`` attribute are false.  ``checkOpacity`` / ``checkVisibilityCSS``
+        opt into the two extra checks.  Nothing here fakes occlusion: that needs a
+        real compositor, which this host does not have.
+        """
+        from ...foundation.arguments import dictionary, is_nullish
+        if not getattr(self, "isConnected", False):
+            return False
+        settings = ({} if is_nullish(options) or options is MISSING
+                    or not isinstance(options, (dict, pyv8.JSObject))
+                    else dictionary(options))
+        from ..css.cascade import computed_style
+        node = self
+        while isinstance(node, Element):
+            values = computed_style(node)
+            if values.get('display') == 'none':
+                return False
+            if node is self and values.get('display') == 'contents':
+                return False
+            if values.get('content-visibility') == 'hidden' and node is not self:
+                return False
+            if (settings.get('checkOpacity') or settings.get('opacityProperty')):
+                try:
+                    if float(str(values.get('opacity', '1')).strip() or 1) == 0:
+                        return False
+                except (TypeError, ValueError):
+                    pass
+            if node is self and (settings.get('checkVisibilityCSS') or settings.get('visibilityProperty')):
+                if values.get('visibility') in ('hidden', 'collapse'):
+                    return False
+            node = node.parentElement
+        return True
+
+    def fn_animate(self, keyframes=MISSING, options=pyv8.Undefined, *_extra):
+        """Start one Web Animation and hand back its Animation object.
+
+        Chrome returns a running, *pending* Animation with a KeyframeEffect and a
+        null startTime.  Previously this member was an ``Undefined`` stub, which
+        the Kasada SDK recorded as a nested null in its pre-encode array.
+        """
+        from .animation import Animation
+        return Animation(target=self, keyframes=keyframes, options=options,
+                         services=getattr(self, "_services", None))
+
     # Chrome reads ``role`` back as the attribute or null, and never validates it.
     def get_role(self):
         value = self.attributes.get("role")

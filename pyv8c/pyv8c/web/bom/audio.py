@@ -868,11 +868,15 @@ class DynamicsCompressorNode(AudioNode):
 
     def __init__(self, *_extra, **kwargs):
         super().__init__(*_extra, **kwargs)
-        self._threshold = AudioParam(-24.0, minimum=-_PARAM_MAX)
-        self._knee = AudioParam(30.0, minimum=0.0)
+        # Web Audio's nominal ranges are per-parameter, not the shared float
+        # maximum: threshold [-100, 0], knee [0, 40], ratio [1, 20],
+        # attack [0, 1], release [0, 1].  Chrome exposes these through
+        # AudioParam.minValue / maxValue (phase 9 parity).
+        self._threshold = AudioParam(-24.0, minimum=-100.0, maximum=0.0)
+        self._knee = AudioParam(30.0, minimum=0.0, maximum=40.0)
         self._ratio = AudioParam(12.0, minimum=1.0, maximum=20.0)
-        self._attack = AudioParam(0.003, minimum=0.0)
-        self._release = AudioParam(0.25, minimum=0.0)
+        self._attack = AudioParam(0.003, minimum=0.0, maximum=1.0)
+        self._release = AudioParam(0.25, minimum=0.0, maximum=1.0)
         self._reduction = 0.0
         rate = self._context.get_sampleRate() if self._context is not None else SAMPLE_RATE
         from .audio_compressor import CompressorDSP

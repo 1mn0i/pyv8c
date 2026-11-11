@@ -365,6 +365,7 @@ class WorkerRealmServices:
 
     def __init__(self, tasks, runtime):
         from .resources.worker import WorkerResourceCapability
+        self.graphics_backend = getattr(getattr(runtime.config, 'browser', None), '_graphics_backend', None)
         self.task_services = _TaskCapability(tasks, runtime.animation_frame_lane)
         runtime._resource_scope.add(self.task_services.cancel_animation_frames)
         self.realm_services = _WorkerRealmCapability(tasks, runtime)
@@ -685,6 +686,7 @@ class PageServices:
     def __init__(self, profile, environment, trace, ownership: Ownership,
                  navigation, scripts, resource_fetcher, frame_resources, document_resources, tasks, scope):
         self._profile = profile
+        self.graphics_backend = profile.browser._graphics_backend
         self.environment = environment
         self.trace = trace
         self._ownership = ownership

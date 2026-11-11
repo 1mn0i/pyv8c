@@ -5,8 +5,12 @@ import sys
 from setuptools import find_packages, setup
 
 ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / 'pyv8'))
 from build_support import BuildV8, ListV8Versions, PyV8BuildExt, ext_modules
+from build_tools.idl_build import validate_packaged_idl
+
+validate_packaged_idl(ROOT)
 
 setup(
     packages=find_packages(where='pyv8c', include=['pyv8c', 'pyv8c.*']),

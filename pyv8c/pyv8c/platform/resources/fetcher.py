@@ -17,7 +17,7 @@ from ...network.redirects import Deliver, RedirectFailure, next_hop
 from .request_headers import browser_headers, fetch_mode
 from .callbacks import CallbackRunner
 from .handles import LoadHandle
-from .session import select_source as select_request_source, check_origin
+from .session import select_source as select_request_source, check_origin, validate_source_scheme
 from .cors import (check_cors as validate_cors, network_preflight_request, preflight,
                    preflight_request, require_inspectable_redirects, validate_preflight)
 
@@ -409,6 +409,8 @@ class ResourceFetchController:
 
     def load_resource(self, url, request=None):
         load = self.prepare(url, request)
+        validate_source_scheme(self.page.environment, load.initiator_url, load.target,
+                               {**load.options, 'mode': self._request_mode(load.options)})
         interceptor = self.page.resource_interceptor
         if callable(interceptor):
             decision = self.callbacks.call_sync(lambda: interceptor(load.target, dict(load.prepared)), load.options.get("timeout"))
@@ -519,6 +521,9 @@ class _AsyncLoad:
         try:
             self.load = (self.fetcher.prepare(url, request) if self.context is None else
                          self.fetcher.prepare(url, request, context=self.context))
+            validate_source_scheme(self.fetcher.page.environment, self.load.initiator_url,
+                                   self.load.target, {**self.load.options,
+                                   'mode': self.fetcher._request_mode(self.load.options)})
         except control_exceptions():
             raise
         except BaseException as error:

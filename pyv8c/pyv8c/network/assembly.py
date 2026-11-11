@@ -3,10 +3,7 @@ from __future__ import annotations
 
 from .backend import NetworkBackend
 from .proxy import PROXY_OPTION, RAW_OPTION_KEYS
-from .registry import accepts_proxy, create_transport
-
-#: The method that makes an object an engine for each role.
-_SERVES = {"http": "request_sync", "ws": "websocket"}
+from .registry import KINDS, KIND_METHODS, accepts_proxy, create_transport
 
 
 def _options(browser, role):
@@ -52,7 +49,7 @@ def _with_proxy(role, name, options, proxy):
 
 def _serves(candidate, role):
     """Whether *candidate* can perform this role."""
-    return hasattr(candidate, _SERVES[role])
+    return hasattr(candidate, KIND_METHODS[role])
 
 
 def _engine(browser, role, value, proxy):
@@ -75,7 +72,7 @@ def _engine(browser, role, value, proxy):
     if not _serves(engine, role):
         raise TypeError(
             f"{role}_engine must be a registered engine name, an object with "
-            f"{_SERVES[role]}, or a factory for one"
+            f"{KIND_METHODS[role]}, or a factory for one"
         )
     if getattr(browser, f"{role}_options"):
         raise TypeError(
@@ -87,7 +84,7 @@ def _engine(browser, role, value, proxy):
 
 def _refuse_unconsumed_options(browser):
     """Reject options no engine would read, instead of dropping them quietly."""
-    given = [role for role in ("http", "ws") if getattr(browser, f"{role}_options")]
+    given = [role for role in KINDS if getattr(browser, f"{role}_options")]
     if given:
         listed = " and ".join(f"{role}_options" for role in given)
         raise TypeError(
@@ -98,7 +95,7 @@ def _refuse_unconsumed_options(browser):
 
 def _refuse_ready_engines(browser):
     """A name is only a preference; a ready engine would be dropped, so it is refused."""
-    for role in ("http", "ws"):
+    for role in KINDS:
         value = getattr(browser, f"{role}_engine")
         if value is not None and not isinstance(value, str):
             raise TypeError(
@@ -107,13 +104,13 @@ def _refuse_ready_engines(browser):
             )
 
 
-def _refuse_shared_options(browser, value):
+def _refuse_shared_options(browser, first_role, role, value):
     """One engine cannot be configured twice; say which options to move."""
-    if browser.ws_options:
+    if getattr(browser, f"{role}_options"):
         raise TypeError(
-            f"http_engine and ws_engine both give {value!r}, which is built once, "
-            "so ws_options would be ignored; give the WebSocket role its own engine "
-            "or move those settings into http_options"
+            f"{first_role}_engine and {role}_engine both give {value!r}, which is built once, "
+            f"so {role}_options would be ignored; give that role its own engine "
+            f"or move those settings into {first_role}_options"
         )
 
 
@@ -138,21 +135,25 @@ def assemble_backend(browser, proxy=None):
         _refuse_unconsumed_options(browser)
         return None
 
-    http = _engine(browser, "http", browser.http_engine, proxy)
-    ws_value = browser.ws_engine
-    if ws_value is None:
-        ws = None
-    elif ws_value is browser.http_engine or (
-        isinstance(ws_value, str) and ws_value == browser.http_engine
-    ):
-        # One name, one engine: a second build means a second client and pool.
-        _refuse_shared_options(browser, ws_value)
-        ws = http
-    else:
-        ws = _engine(browser, "ws", ws_value, proxy)
+    engines = {}
+    configured = {}
+    for role in KINDS:
+        value = getattr(browser, f"{role}_engine")
+        if value is None:
+            engines[role] = None
+            continue
+        shared = next((first for first, previous in configured.items()
+                       if value is previous or
+                       (isinstance(value, str) and value == previous)), None)
+        if shared is not None:
+            _refuse_shared_options(browser, shared, role, value)
+            engines[role] = engines[shared]
+        else:
+            engines[role] = _engine(browser, role, value, proxy)
+            configured[role] = value
 
-    if http is None and ws is None:
+    if all(engine is None for engine in engines.values()):
         _refuse_proxy_without_engine(proxy)
         _refuse_unconsumed_options(browser)
         return None
-    return NetworkBackend(http, ws)
+    return NetworkBackend(**engines)

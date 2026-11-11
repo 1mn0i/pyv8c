@@ -8,8 +8,10 @@ from ...foundation.arguments import boolean, dom_string
 from ...foundation.error_policy import host_boundary
 from ...foundation.urls import unloadable_scheme
 from ..dom.collections import DOMTokenList
-from .elements import HTMLElement, _set_url_value, _url_value
 from ..permissions_policy import PermissionsPolicy
+from .elements import HTMLElement
+from .utils import set_url_value, url_value
+
 
 _SANDBOX_TOKENS = (
     "allow-downloads", "allow-forms", "allow-modals", "allow-orientation-lock",
@@ -65,9 +67,9 @@ class HTMLIFrameElement(HTMLElement):
         self._services.realm_services.post_task(lambda: resources.load_iframe(self)
                                                 if self._is_connected() else None)
 
-    def get_src(self): return _url_value(self, "src")
+    def get_src(self): return url_value(self, "src")
     def set_src(self, value):
-        _set_url_value(self, "src", value)
+        set_url_value(self, "src", value)
         self._resource_started = False
         if self._services and self._is_connected() and "srcdoc" not in self.attributes:
             resource_services = self._services.resource_services
@@ -76,7 +78,7 @@ class HTMLIFrameElement(HTMLElement):
                 #: -- leaves the frame where it was, as a browser leaves it: nothing was
                 #: asked for, so there is no outcome to report.  No address at all is not
                 #: that case: the frame still loads the empty document it starts with.
-                target = _url_value(self, "src")
+                target = url_value(self, "src")
                 if target and unloadable_scheme(target) is not None:
                     return
                 #: A load the host will not make is the host's own outcome: the frame
@@ -145,8 +147,8 @@ class HTMLIFrameElement(HTMLElement):
     def set_scrolling(self, value): self._string_attribute("scrolling", value)
     def get_frameBorder(self): return self._string_attribute("frameborder")
     def set_frameBorder(self, value): self._string_attribute("frameborder", value)
-    def get_longDesc(self): return _url_value(self, "longdesc")
-    def set_longDesc(self, value): _set_url_value(self, "longdesc", value)
+    def get_longDesc(self): return url_value(self, "longdesc")
+    def set_longDesc(self, value): set_url_value(self, "longdesc", value)
     def get_marginHeight(self): return self._string_attribute("marginheight")
     def set_marginHeight(self, value): self._string_attribute("marginheight", value)
     def get_marginWidth(self): return self._string_attribute("marginwidth")

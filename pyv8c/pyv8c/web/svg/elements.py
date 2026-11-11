@@ -10,7 +10,6 @@ import re
 import struct
 import math
 
-
 from ...idl import interface
 from ...foundation.arguments import dom_string, number
 from ..page_errors import PageTypeError, NotSupportedError
@@ -20,6 +19,7 @@ from ..dom.element import Element
 from ..css.cascade import computed_style
 from ..dom.matrix import identity, _multiply, _rotation, _scaling, _translation, _TWO_D
 from ..dom.point import point_init
+
 
 __all__ = ["SVGAnimatedLength", "SVGElement", "SVGGeometryElement", "SVGGraphicsElement",
            "SVGLength", "SVGRectElement"]

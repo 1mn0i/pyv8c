@@ -12,6 +12,35 @@ from pyv8c import Browser  # noqa: E402
 EXTENSION_URL = "chrome-extension://kjacjjdnoddnpbbcjilcajfhhbdhkpg/images/about/en/1.png"
 
 
+@pytest.mark.parametrize('target', ['file:///etc/passwd', 'custom://host/resource', EXTENSION_URL])
+def test_blocked_scheme_cannot_reach_custom_loader(target):
+    from types import SimpleNamespace
+    from pyv8c.foundation.host_errors import LoadFailure
+    from pyv8c.platform.resources.session import select_source
+
+    calls = []
+    profile = SimpleNamespace(resource_cache=SimpleNamespace(get=lambda key: calls.append(key)))
+    with pytest.raises(LoadFailure):
+        select_source(profile=profile, environment=None, initiator='https://example.test/',
+                      target=target, options={}, origin=('https', 'example.test', 443),
+                      cache_key=None, loader=lambda *args: None, backend=None)
+    assert calls == []
+
+
+def test_blocked_scheme_cannot_reach_interceptor():
+    calls = []
+    browser = Browser(stub_logging='off', resource_interceptor=lambda *args: calls.append(args))
+    try:
+        page = browser.new_profile().new_page()
+        page.set_content('<body></body>', url='https://example.test/')
+        page.evaluate("fetch('file:///secret').catch(() => { window.done = true; })")
+        page.run_until_idle(1)
+        assert page.evaluate('window.done') is True
+        assert calls == []
+    finally:
+        browser.close()
+
+
 def test_a_browser_own_scheme_never_reaches_the_engine():
     """The failure is the browser's, and the network engine is never asked."""
     asked = []

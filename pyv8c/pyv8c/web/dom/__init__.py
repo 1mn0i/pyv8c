@@ -19,9 +19,11 @@ _EXPORTS = {
     "Document": (".document", "Document"),
     "Element": (".element", "Element"),
     "HTML_CLASSES": ("..html.registry", "HTML_CLASSES"),
-    **{name: ("..html.elements", name) for name in (
-        "HTMLElement", "HTMLImageElement", "HTMLLinkElement", "HTMLMetaElement",
-        "HTMLScriptElement", "HTMLStyleElement", "HTMLTemplateElement")},
+    "HTMLElement": ("..html.elements", "HTMLElement"),
+    "HTMLImageElement": ("..html.image", "HTMLImageElement"),
+    "HTMLLinkElement": ("..html.links", "HTMLLinkElement"),
+    **{name: ("..html.document_elements", name) for name in (
+        "HTMLMetaElement", "HTMLScriptElement", "HTMLStyleElement", "HTMLTemplateElement")},
     "HTMLIFrameElement": ("..html.iframe", "HTMLIFrameElement"),
     **{name: ("..html.media", name) for name in
        ("HTMLAudioElement", "HTMLMediaElement", "HTMLVideoElement")},

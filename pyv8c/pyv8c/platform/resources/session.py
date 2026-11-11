@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from types import SimpleNamespace
 
 from ...foundation.host_errors import LoadFailure
+from ...foundation.environment import extension_resource
 from ...foundation.urls import absolute_url, origin_tuple, serialize_origin, unloadable_scheme
 from ...network.models import NetworkRequest, NetworkResponse
 from ...network.redirects import Deliver, RedirectFailure, next_hop
@@ -44,10 +45,26 @@ def plain_response(value, url):
                            redirected=bool(redirected), type=str(kind))
 
 
+def validate_source_scheme(environment, initiator, target, options):
+    """Reject browser-owned schemes before invoking any host callback."""
+    blocked = unloadable_scheme(target)
+    if blocked is None:
+        return
+    if (str(target).lower().startswith('chrome-extension:')
+            and (options.get('mode') != 'navigate' or options.get('browser_initiated'))
+            and extension_resource(environment, target, source_url=initiator) is not None):
+        return
+    raise LoadFailure(blocked)
+
+
 def select_source(*, profile, environment, initiator, target, options, origin,
                   cache_key, loader, backend):
     """Shared source precedence for page and Worker requests."""
-    cached = profile.resource_cache.get(cache_key)
+    blocked = unloadable_scheme(target)
+    # Extension resources are handled locally below; no other browser-owned
+    # scheme may reach the cache, a custom loader, or a network engine.
+    validate_source_scheme(environment, initiator, target, options)
+    cached = profile.resource_cache.get(cache_key) if blocked is None else None
     if cached is not None:
         return 'payload', plain_response(cached, target)
     if target.startswith('about:blank'):
@@ -64,11 +81,10 @@ def select_source(*, profile, environment, initiator, target, options, origin,
     extension = extension_response(view, target, options)
     if extension is not None:
         return 'payload', plain_response(extension, target)
-    if loader:
-        return 'loader', loader
-    blocked = unloadable_scheme(target)
     if blocked is not None:
         raise LoadFailure(blocked)
+    if loader:
+        return 'loader', loader
     if backend is not None and backend.http_available:
         return 'engine', backend
     raise LoadFailure('Network access requires an explicit resource_loader or real_network=True')
@@ -104,6 +120,7 @@ class ResourceRequestSession:
                 raise LoadFailure('resource owner closed or request cancelled')
 
         active()
+        validate_source_scheme(self.environment, initiator, target, options)
         if self.interceptor is not None:
             decision = self.interceptor(target, dict(prepared))
             active()

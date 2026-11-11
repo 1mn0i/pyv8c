@@ -1,15 +1,15 @@
 """The HTML canvas tag and its rendering context selection."""
 import base64
 import re
+
 from pyv8c import pyv8
 from ...idl import interface
 from ...foundation.arguments import MISSING, integer
 from .elements import HTMLElement
-from ..graphics.canvas import (CanvasRenderingContext2D, GPUCanvasContext,
-                               ImageBitmapRenderingContext, _requested_context,
-                               _creation_settings, _canvas_encoding_type, _canvas_quality,
-                               _encode_canvas)
-from ..graphics.webgl import WebGL2RenderingContext, WebGLRenderingContext
+from ..graphics.canvas.context2d import CanvasRenderingContext2D
+from ..graphics.canvas.contexts import GPUCanvasContext, ImageBitmapRenderingContext, requested_context, creation_settings
+from ..graphics.canvas.encoding import normalize_encoding_type, normalize_encoding_quality, encode_canvas
+from ..graphics.webgl.context import WebGL2RenderingContext, WebGLRenderingContext
 
 
 @interface('HTMLCanvasElement', 'HTMLElement')
@@ -36,17 +36,18 @@ class HTMLCanvasElement(HTMLElement):
         self._resize()
 
     def fn_getContext(self, kind='', options=None, *_):
-        requested = _requested_context(kind)
+        requested = requested_context(kind)
         if requested is None: return pyv8.Null
         # The first context a canvas answers for fixes its type, as it does in Chrome.
         if self._context_kind not in (None, requested): return pyv8.Null
-        self._context_kind = requested
         if requested == '2d':
             if self._context2d is None:
-                settings = _creation_settings(type(self).__name__, options)
+                settings = creation_settings(type(self).__name__, options)
                 self._context2d=CanvasRenderingContext2D(self)
                 self._context2d._creation = settings
+            self._context_kind = requested
             return self._context2d
+        self._context_kind = requested
         if requested == 'webgl2':
             if self._webgl2 is None: self._webgl2=WebGL2RenderingContext(self)
             return self._webgl2
@@ -59,11 +60,11 @@ class HTMLCanvasElement(HTMLElement):
         if self._webgl is None: self._webgl=WebGLRenderingContext(self)
         return self._webgl
     def fn_toDataURL(self, kind=MISSING, quality=MISSING, *_):
-        mime = _canvas_encoding_type(kind)
+        mime = normalize_encoding_type(kind)
         if (not self._width or not self._height or self._width > 65535
                 or self._height > 65535 or self._width * self._height > 32768 * 8192):
             return 'data:,'
-        mime, encoded = _encode_canvas(self, mime, _canvas_quality(quality))
+        mime, encoded = encode_canvas(self, mime, normalize_encoding_quality(quality))
         if encoded is None:
             return 'data:,'
         return 'data:' + mime + ';base64,' + base64.b64encode(encoded).decode('ascii')

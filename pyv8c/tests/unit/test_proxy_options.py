@@ -245,6 +245,34 @@ def test_one_engine_serving_both_roles_is_built_once_with_the_proxy(built):
     assert built["ws"] == []
 
 
+def test_additional_role_is_assembled_and_closed(monkeypatch):
+    from pyv8c.network import assembly
+
+    class Extra:
+        closed = False
+
+        def connect(self):
+            pass
+
+        def close(self):
+            self.closed = True
+
+    extra = Extra()
+    configured = browser(http_engine=None, ws_engine=None)
+    configured.extra_engine = extra
+    configured.extra_options = {}
+    monkeypatch.setattr(assembly, 'KINDS', (*assembly.KINDS, 'extra'))
+    monkeypatch.setitem(assembly.KIND_METHODS, 'extra', 'connect')
+    backend = assemble_backend(configured)
+    jar = object()
+    backend.cookies = jar
+    assert backend.engine('extra') is extra
+    assert extra.cookies is jar
+    backend.close()
+    assert extra.closed
+    assert backend.engine('extra') is None
+
+
 def test_leaving_the_proxy_unset_without_engines_is_not_an_error():
     assert assemble_backend(browser(real_network=False), proxy=None) is None
 

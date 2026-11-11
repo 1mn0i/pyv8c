@@ -150,7 +150,7 @@ def _is_matrix(value):
     return isinstance(value, DOMMatrixReadOnly)
 
 
-def _init_values(init):
+def init_matrix_values(init):
     """The six or sixteen values of a ``DOMMatrixInit``, and whether they are 2D."""
     if _is_matrix(init):
         return list(init._values()), init._is_2d
@@ -371,7 +371,7 @@ class DOMMatrixReadOnly:
         return self._plain(_scaling(1.0, -1.0, 1.0))
 
     def fn_multiply(self, other=MISSING, *_extra):
-        values, is_2d = _init_values(other)
+        values, is_2d = init_matrix_values(other)
         return self._copy()._store(_multiply(self._matrix, values), self._is_2d and is_2d)
 
     def fn_inverse(self, *_extra):
@@ -380,7 +380,7 @@ class DOMMatrixReadOnly:
     # -- statics ---------------------------------------------------------------
     @staticmethod
     def fn_fromMatrix(_realm, init=None, *_extra):
-        values, is_2d = _init_values(init)
+        values, is_2d = init_matrix_values(init)
         matrix = DOMMatrix()
         matrix._store(values, is_2d)
         return matrix
@@ -473,12 +473,12 @@ class DOMMatrix(DOMMatrixReadOnly):
         self._store(_multiply(self._matrix, core), self._is_2d)
 
     def fn_multiplySelf(self, other=MISSING, *_extra):
-        values, is_2d = _init_values(other)
+        values, is_2d = init_matrix_values(other)
         self._store(_multiply(self._matrix, values), self._is_2d and is_2d)
         return self
 
     def fn_preMultiplySelf(self, other=MISSING, *_extra):
-        values, is_2d = _init_values(other)
+        values, is_2d = init_matrix_values(other)
         self._store(_multiply(values, self._matrix), self._is_2d and is_2d)
         return self
 
