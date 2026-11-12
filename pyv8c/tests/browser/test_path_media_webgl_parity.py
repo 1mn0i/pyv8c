@@ -45,6 +45,16 @@ def test_current_path_fill_rules_boundaries_and_creation_transform():
     }
 
 
+def test_monochrome_integer_ranges_on_a_color_display():
+    assert evaluate("""[
+        '(monochrome)','(monochrome:0)','(monochrome:1)',
+        '(min-monochrome:0)','(max-monochrome:0)',
+        '(max-monochrome:-1)','(monochrome:-1)','(monochrome:0.5)'
+    ].map(q=>matchMedia(q).matches)""") == [
+        False, True, False, True, True, False, False, False,
+    ]
+
+
 @pytest.mark.parametrize('offscreen', [False, True])
 def test_path_coercion_order_defaults_and_exception_short_circuit(offscreen):
     canvas = "new OffscreenCanvas(32,32)" if offscreen else "document.createElement('canvas')"
@@ -137,3 +147,61 @@ def test_path_methods_require_and_convert_all_arguments(method, required):
         'errors': [['TypeError', f"Failed to execute '{method}' on 'CanvasRenderingContext2D': "
                     f'{required} arguments required, but only 0 present.']],
     }
+
+
+@pytest.mark.parametrize(('value', 'expected'), [
+    ('0', [True, True, True]), ('+0', [True, True, True]),
+    ('-0', [True, True, True]), ('-1', [False, True, False]),
+    ('0.0', [False, False, False]), ('1e0', [False, False, False]),
+    ('\u0660', [False, False, False]),
+    ('calc(0)', [True, True, True]), ('calc(-1)', [False, True, False]),
+    ('calc(0.2)', [True, True, True]), ('calc(0.5)', [False, False, True]),
+    ('calc(-0.5)', [True, True, True]), ('calc(-0.6)', [False, True, False]),
+    ('calc(1 - 1)', [True, True, True]), ('calc(1-1)', [False, False, False]),
+    ('calc(1 + -1)', [True, True, True]), ('calc(- 1)', [False, False, False]),
+    ('calc(2 * 0)', [True, True, True]), ('calc(0 / 1)', [True, True, True]),
+    ('calc(1 / 0)', [False, False, True]), ('calc(0 / 0)', [True, True, True]),
+    ('calc(infinity)', [False, False, True]), ('calc(-infinity)', [False, True, False]),
+    ('calc(NaN)', [True, True, True]), ('calc(1e0 - 1)', [True, True, True]),
+    ('min(0, 1)', [True, True, True]), ('max(0, -1)', [True, True, True]),
+    ('clamp(0, -1, 1)', [True, True, True]), ('calc(min(0, 1) + 0)', [True, True, True]),
+    ('calc(0px)', [False, False, False]), ('calc(1px / 1px - 1)', [True, True, True]),
+    ('calc(1/**/+/**/-1)', [False, False, False]),
+    ('calc(1/**/ + /**/-1)', [True, True, True]), ('calc(0 + 0)junk', [False, False, False]),
+])
+def test_monochrome_css_integer_math_observed_in_chrome(value, expected):
+    queries = [f'({prefix}monochrome:{value})' for prefix in ('', 'min-', 'max-')]
+    assert evaluate(json.dumps(queries) + '.map(q=>matchMedia(q).matches)') == expected
+
+
+def test_long_media_integer_tokens_do_not_change_host_integer_limits():
+    before = sys.get_int_max_str_digits()
+    assert evaluate("""['9'.repeat(4500),'-'+'9'.repeat(4500),'0'.repeat(4500)]
+        .map(value=>['','min-','max-'].map(prefix=>matchMedia('('+prefix+'monochrome:'+value+')').matches))""") == [
+        [False, False, True], [False, True, False], [True, True, True],
+    ]
+    assert sys.get_int_max_str_digits() == before
+
+
+@pytest.mark.parametrize(('query', 'expected'), [
+    ('', True), ('only screen', True), ('not print', True), ('not screen', False),
+    ('(monochrome:calc(0)), (monochrome:1)', True),
+    ('(monochrome:min(0,1)) and (monochrome:0)', True),
+    ('(monochrome:0) or (monochrome:1)', True),
+    ('((monochrome:0) and (monochrome:0))', True),
+    ('not (monochrome)', True), ('not (monochrome:0)', False),
+    ('not (unknown)', False), ('not (monochrome:invalid)', False),
+    ('not (color:0.0)', False), ('not (color-index:invalid)', False),
+    ('not (orientation:invalid)', False), ('not (hover:invalid)', False),
+    ('not (prefers-color-scheme:invalid)', False),
+    ('not (prefers-color-scheme:dark)', True), ('not (hover:none)', True),
+    ('(min-monochrome:0) and (unknown)', False),
+    ('(max-monochrome:-1) and (unknown)', False),
+    ('not ((max-monochrome:-1) and (unknown))', True),
+    ('(monochrome:0) and\t(monochrome:0)', True),
+    ('(monochrome:0)/**/and/**/(monochrome:0)', True),
+    ('(monochrome:0)garbage', False), ('(monochrome:0)(monochrome:1)', False),
+    ('not screen and garbage', False), ('(monochrome:0)),(monochrome:0)', True),
+])
+def test_balanced_media_query_conditions_and_error_recovery(query, expected):
+    assert evaluate(f'matchMedia({json.dumps(query)}).matches') is expected
