@@ -186,7 +186,9 @@ def _cached_face_path(record):
 def _face_chain(families, environment, weight, style, *, text_presentation=False):
     """The faces a family list names, then this platform's fallbacks, in tried order."""
     table, index, chains = _indexed_font_table(environment)
-    key = (tuple(families), str(weight), str(style), text_presentation)
+    preferred = getattr(getattr(environment, 'fonts', None), 'default_family', None)
+    key = (tuple(families), str(weight), str(style), text_presentation,
+           normalize(preferred) if preferred else None)
     known = chains.get(key)
     if known is not None:
         return known
@@ -589,13 +591,24 @@ def _place(element, style, walk, containing, positioned):
                 except ValueError:
                     pass
             seconds |= milliseconds
-            digit_width = math.ceil(text_width('0', time_style, environment))
-            digit_pair = 2 * digit_width + 2
-            separator = math.ceil(text_width(':', time_style, environment))
+            size = _font_size(time_style)
+            chain = _face_chain(_families(time_style), environment,
+                                time_style.get('font-weight', '400'),
+                                time_style.get('font-style', 'normal'))
+            font_record = chain[0] if chain else None
+            path = _face_path(font_record) if font_record is not None else None
+            bitmap = bool(path and text_engine.bitmap_strike_applies(
+                path, getattr(font_record, 'index', 0), size, '0123456789:.'))
+            digit = text_width('0', time_style, environment)
+            colon = text_width(':', time_style, environment)
+            if bitmap:
+                digit = math.floor(digit + 0.5)
+                colon = math.floor(colon + 0.5)
             fields = 2 + int(seconds)
-            editor_width = digit_pair * fields + separator * (fields - 1)
+            editor_width = (2 * digit + 2) * fields + colon * (fields - 1)
             if milliseconds:
-                editor_width += 3 * digit_width + 2 + separator
+                editor_width += 3 * digit + 2 + colon
+            editor_width = math.ceil(editor_width)
             font_size = _font_size(style)
             picker = math.ceil(font_size * 1.05) + 6
             default_size = (editor_width + 8 + picker,
@@ -1179,6 +1192,13 @@ def _flow_children(element, style, walk, containing, positioned):
             height = placed.height + child_margin["top"] + child_margin["bottom"]
             recorded = walk.baselines.get(child)
             item_ascent = height if recorded is None else recorded + child_margin["top"]
+            # Atomic inline boxes establish a line even at zero dimensions. The
+            # containing element's font strut participates in its baseline.
+            tag = str(getattr(child, "localName", "")).lower()
+            if height == 0 and (child_style.get("display") != "inline" or
+                    tag in ("img", "iframe", "canvas", "video", "audio", "object", "input")):
+                strut = _line_style(style, environment, root)
+                line.add(0.0, strut.ascent, strut.descent)
             line.add(outer, item_ascent, max(0.0, height - item_ascent))
             line.items.append((child, placed, item_ascent))
             continue

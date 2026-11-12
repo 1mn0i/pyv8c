@@ -375,7 +375,16 @@ class Animation(EventTarget):
     def get_id(self): return self._id
     def set_id(self, value): self._id = str(dom_string(value))
     def get_replaceState(self): return self._replace_state
-    def get_overallProgress(self): return pyv8.Null
+    def get_overallProgress(self):
+        if self._effect is None or self._current_time is pyv8.Null:
+            return pyv8.Null
+        current = self._snapshot()
+        end = self._end_time()
+        if end == 0:
+            return 0.0 if current < 0 else 1.0
+        if math.isinf(end):
+            return 0.0
+        return min(1.0, max(0.0, current / end))
     def get_finished(self): return self._finished_promise
     def get_ready(self): return self._ready_promise
     def get_onfinish(self): return self._get_handler('onfinish')

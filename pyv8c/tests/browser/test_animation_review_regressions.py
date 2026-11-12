@@ -192,3 +192,21 @@ def test_finished_fill_animation_allows_layout_cache(page):
         return first is second
     assert page.realm.executor.call(snapshot_reused)
     assert page.evaluate("document.getElementById('filled').getBoundingClientRect().width") == 100
+
+
+def test_overall_progress_tracks_effect_end_and_unresolved_time(page):
+    result = page.evaluate('''(() => {
+        const a = document.body.animate([], {duration: 500, iterations: 2, delay: 100});
+        const result = [a.overallProgress];
+        a.pause();
+        for (const time of [-1, 0, 550, 1100, 1500]) {
+            a.currentTime = time;
+            result.push(a.overallProgress);
+        }
+        a.cancel(); result.push(a.overallProgress);
+        const zero = document.body.animate([], 0);
+        result.push(zero.overallProgress); zero.cancel();
+        return result;
+    })()''')
+    from pyv8c import pyv8
+    assert result == [0, 0, 0, 0.5, 1, 1, pyv8.Null, 1]

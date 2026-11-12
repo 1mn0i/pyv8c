@@ -297,6 +297,32 @@ def _table(face, name):
     return data if isinstance(data, bytes) else bytes(data)
 
 
+def bitmap_strike_applies(path, index, size, chars):
+    """Whether a Windows bitmap strike includes the nominal glyph range at this size."""
+    if os.name != 'nt':
+        return False
+    face = _face(path, index)
+    font = _font(path, index, size) if face is not None else None
+    if font is None:
+        return False
+    table = _table(face, 'EBLC')
+    if len(table) < 8:
+        return False
+    count = struct.unpack_from('>I', table, 4)[0]
+    glyphs = [font.get_nominal_glyph(ord(char)) for char in chars]
+    if not glyphs or any(glyph is None for glyph in glyphs):
+        return False
+    ppem = math.floor(float(size) + 0.5)
+    for i in range(count):
+        offset = 8 + i * 48
+        if offset + 48 > len(table):
+            break
+        first, last = struct.unpack_from('>HH', table, offset + 40)
+        if table[offset + 45] == ppem and all(first <= glyph <= last for glyph in glyphs):
+            return True
+    return False
+
+
 def text_control_width(path, index=0, size=16.0, columns=20):
     """Estimate Blink's text-field intrinsic width from a face's glyph metrics."""
     face = _face(path, index)

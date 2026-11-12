@@ -327,7 +327,15 @@ class Element(_ParentNodeMixin, _ChildNodeMixin, _NonDocumentTypeChildNodeMixin,
                 and document.get_documentElement() is self):
             return document.get_defaultView().get_innerWidth()
         from .layout import layout
-        return int(round(layout(self).padding_box_width))
+        box = layout(self)
+        width = box.padding_box_width
+        # Chromium exposes the editable viewport, excluding padding, for text
+        # input controls. Other elements include padding in their client width.
+        if (self.localName == 'input' and
+                getattr(self, 'get_type', lambda: '')() in
+                ('text', 'search', 'password', 'tel', 'url', 'email', 'number')):
+            width = max(0.0, width - box.padding.get('left', 0.0) - box.padding.get('right', 0.0))
+        return int(round(width))
     def get_clientHeight(self):
         document = self.ownerDocument
         if (self.localName == 'html' and self.isConnected and document is not None

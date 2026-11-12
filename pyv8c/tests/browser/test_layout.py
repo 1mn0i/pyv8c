@@ -586,7 +586,7 @@ def test_text_like_input_types_have_intrinsic_dimensions(page):
         document.body.appendChild(input); const rect = input.getBoundingClientRect();
         const result = [rect.width, rect.height, input.clientWidth, input.clientHeight];
         input.remove(); return result;
-    }))()''') == [[177, 21, 173, 17]] * 6
+    }))()''') == [[177, 21, 169, 17]] * 6
 
 
 def test_submit_and_reset_with_explicit_labels_use_button_metrics(page):
@@ -687,3 +687,67 @@ def test_time_input_seconds_follow_value_and_minimum(page):
         input.min = '00:00:00.123'; widths.push(input.getBoundingClientRect().width);
         return widths;
     })()''') == [72, 95, 125, 95, 125]
+
+
+def test_computed_word_spacing_resolves_normal_and_inheritance(page):
+    page.set_content('<div id="a"><span id="b">hello world</span></div>')
+    values = page.evaluate('''(() => {
+        const a = document.querySelector('#a'), b = document.querySelector('#b');
+        return ['', 'normal', 'initial', '1em'].map(value => {
+            a.style.wordSpacing = value;
+            return [getComputedStyle(a).wordSpacing, getComputedStyle(b).wordSpacing];
+        });
+    })()''')
+    assert [list(item) for item in values] == [
+        ['0px', '0px'], ['0px', '0px'], ['0px', '0px'], ['16px', '16px'],
+    ]
+
+
+def test_empty_atomic_inline_boxes_still_create_a_line_box(page):
+    page.set_content('''<!doctype html><body style="line-height:20px">
+        <div id="empty"><span></span></div>
+        <div id="block"><span style="display:inline-block;width:0;height:0"></span></div>
+        <div id="frame"><iframe style="width:0;height:0;border:0"></iframe></div>
+        <div id="image"><img style="width:0;height:0"></div>
+        </body>''')
+    assert page.evaluate("['empty','block','frame','image'].map(id => document.getElementById(id).clientHeight)") == [0, 20, 20, 20]
+
+
+def test_text_input_client_width_excludes_editable_padding(page):
+    page.set_content('''<input id="search" type="search" style="width:200px;padding:10px 20px;border:3px solid">
+                        <input id="button" type="button" style="width:200px;padding:10px 20px;border:3px solid">''')
+    assert page.evaluate("['search','button'].map(id => {let x=document.getElementById(id);return [x.getBoundingClientRect().width,x.clientWidth]})") == [[200, 154], [200, 194]]
+
+
+def test_time_input_width_uses_font_metrics_and_bitmap_strikes(page):
+    from pyv8c.foundation import system_fonts
+    installed = {record.family.lower() for record in system_fonts.records()}
+    if not {'nsimsun', 'consolas', 'courier new'} <= installed:
+        pytest.skip('the Chrome reference uses Windows fonts')
+    assert page.evaluate('''(() => ['NSimSun','Consolas','Courier New'].map(font => {
+        const input = document.createElement('input'); input.type = 'time';
+        input.style.fontFamily = font; document.body.appendChild(input);
+        const width = () => input.getBoundingClientRect().width;
+        const first = width(); input.step='1'; const seconds=width();
+        input.step='0.001'; const millis=width(); input.step='60'; input.style.fontSize='20px';
+        const large=width(); input.remove(); return [font,first,seconds,millis,large];
+    }))()''') == [['NSimSun',72,95,125,94], ['Consolas',74,98,129,99],
+                  ['Courier New',77,103,137,105]]
+
+
+def test_font_fallback_cache_respects_each_environment():
+    from pyv8c.foundation.environment import BrowserEnvironment
+    from pyv8c.foundation import system_fonts
+    from pyv8c.web.dom.layout import _face_chain
+    families = {record.family.lower() for record in system_fonts.records()}
+    if not {'arial', 'noto sans sc', 'microsoft yahei'} <= families:
+        pytest.skip('requires the Windows fonts used by this comparison')
+    first = BrowserEnvironment({'fonts.default_family': 'Noto Sans SC'})
+    second = BrowserEnvironment({'fonts.default_family': 'Microsoft YaHei'})
+    chain_a = _face_chain(['Arial'], first, '400', 'normal')
+    chain_b = _face_chain(['Arial'], second, '400', 'normal')
+    names_a = [font.family.lower() for font in chain_a]
+    names_b = [font.family.lower() for font in chain_b]
+    assert names_a.index('noto sans sc') < names_a.index('microsoft yahei')
+    assert 'noto sans sc' not in names_b or names_b.index('microsoft yahei') < names_b.index('noto sans sc')
+    assert names_a != names_b
