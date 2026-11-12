@@ -55,6 +55,21 @@ def test_monochrome_integer_ranges_on_a_color_display():
     ]
 
 
+def test_anisotropy_limit_is_enabled_per_webgl_context():
+    assert evaluate("""['webgl','webgl2'].map(kind=>{
+        const gl=document.createElement('canvas').getContext(kind);
+        gl.getSupportedExtensions();
+        const before=[gl.getParameter(34047),gl.getError()];
+        const ext=gl.getExtension('EXT_texture_filter_anisotropic');
+        const after=[gl.getParameter(ext.MAX_TEXTURE_MAX_ANISOTROPY_EXT),gl.getError()];
+        const other=document.createElement('canvas').getContext(kind);
+        const isolated=[other.getParameter(34047),other.getError()];
+        return {before,after,isolated,same:gl.getExtension('EXT_texture_filter_anisotropic')===ext};
+    })""") == [
+        {"before": [None, 1280], "after": [16, 0], "isolated": [None, 1280], "same": True},
+    ] * 2
+
+
 @pytest.mark.parametrize('offscreen', [False, True])
 def test_path_coercion_order_defaults_and_exception_short_circuit(offscreen):
     canvas = "new OffscreenCanvas(32,32)" if offscreen else "document.createElement('canvas')"
