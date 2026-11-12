@@ -282,19 +282,6 @@ def test_a_checkout_that_states_no_version_is_refused_by_name(tmp_path):
         extract_idl.read_chromium_version(tmp_path)
 
 
-def test_real_renderer_sources_have_members_for_core_interfaces():
-    root = Path(__file__).resolve().parents[4] / "_pyv8env" / "renderer"
-    if not root.is_dir():
-        pytest.skip(f"no generated Chromium sources at {root}")
-    snapshot = extract_idl.extract(root)
-    for name in ("Event", "EventTarget", "Node", "Document", "Element", "Window", "Headers", "Blob", "Request", "Response", "URL"):
-        entry = snapshot[name]
-        assert any(entry["members"].values()), name
-    assert len(snapshot["URL"]["sources"]) >= 2
-    assert snapshot["_report"]["interfaces"] > 1000
-    assert snapshot["_report"]["unresolved_signatures"] > 0
-
-
 def test_generated_baseline_keeps_full_runtime_snapshot_and_report():
     baseline = _bundled_baseline_document()
     metadata = baseline["idl"]

@@ -219,7 +219,7 @@ def test_an_inserted_frame_answers_content_window_at_once(page):
 
     A browser has the initial about:blank window the moment the frame joins the document,
     and a page reads ``contentWindow`` right then -- an inline challenge bootstrap does,
-    and a null there throws inside it (``examples/ali.py``).  Only the document the frame
+    and a null there throws inside it.  Only the document the frame
     asks for arrives later.
     """
     page.set_content("""<body><script>

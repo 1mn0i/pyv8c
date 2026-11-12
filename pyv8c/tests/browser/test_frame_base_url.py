@@ -4,11 +4,11 @@
 document that created them.  Resolution used to read the frame's own URL instead, which turned
 ``<script src="/cdn-cgi/challenge-platform/scripts/jsd/main.js">`` into a bare path -- refused
 as "not a scheme a page loads", so the script was never requested at all (measured on the live
-Cloudflare challenge, 2026-10-10, see ``examples/5s/README.md``).
+Cloudflare challenge, 2026-10-10).
 
-Two-sided reading of the same three shapes: ``examples/5s/script/base_url_frames.py``.  Chrome
-resolves the plain ``srcdoc`` and the ``about:blank`` cases; the sandboxed ``srcdoc`` one it
-*does* drop (an open divergence, recorded there, not asserted here as a Chrome fact).
+A two-sided reading of the same three shapes shows that Chrome resolves the plain ``srcdoc``
+and the ``about:blank`` cases; the sandboxed ``srcdoc`` one it *does* drop (an open divergence,
+not asserted here as a Chrome fact).
 """
 import json
 import threading

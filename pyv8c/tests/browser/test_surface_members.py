@@ -1,6 +1,6 @@
 """DOM/BOM members a challenge reads, and the differences a two-sided surface diff found.
 
-Measured against Chrome 154 on 2026-10-07 with ``examples/5s/script/surface_diff.py`` -- the same
+Measured against Chrome 154 on 2026-10-07 -- the same
 page, the same probe, both engines, comparing every member of ~86 DOM/BOM objects by kind
 (accessor, value, function arity).  Two of the three classes are guarded here:
 
@@ -13,7 +13,7 @@ page, the same probe, both engines, comparing every member of ~86 DOM/BOM object
 
 The third class -- members the baseline itself has nowhere to put, such as the eight ``2d``
 context attributes -- is a data gap with no honest assertion available until the baseline is
-regenerated; it is written down in ``examples/5s/README.md`` and in ``html_canvas.py``.
+regenerated.
 
 A fourth is not about members but about the object holding them: a callback interface has no
 ``prototype``, which Blink states in ``SetupIDLCallbackInterfaceTemplate`` and this engine had
@@ -62,9 +62,9 @@ def test_a_collection_publishes_the_iterators_its_interface_has():
     Sharing ``NodeList``'s implementation as a *base class* carried its iterator flags along, so
     ``HTMLCollection``, its two subclasses and ``NamedNodeMap`` published
     ``entries``/``keys``/``values``/``forEach`` -- four names Chrome does not have there, on
-    interfaces whose baseline parent is ``None`` (measured against Chrome 154 on 2026-10-07 with
-    ``examples/5s/script/iterable_probe.py``; the same probe shows both sides do have
-    ``Symbol.iterator``, which is why the fix narrows the flags rather than dropping them).
+    interfaces whose baseline parent is ``None`` (measured against Chrome 154 on 2026-10-07;
+    the same probe shows both sides do have ``Symbol.iterator``, which is why the fix narrows
+    the flags rather than dropping them).
 
     The other direction matters as much: what really is a ``NodeList`` keeps the four names,
     inherited from it.
@@ -165,10 +165,10 @@ def test_implementation_state_is_not_an_idl_constant():
 
     ``AudioNode.inputs``/``outputs`` are channel counts and ``ScriptProcessorNode``'s
     ``channel_count`` is a default; harvesting them into the constant list put them on 46
-    interface objects, where Chrome has neither (measured against Chrome 154 on 2026-10-07 with
-    ``examples/5s/script/surface_diff.py --probe surface_wide``, which compares every member of
-    all 2046 holders a window exposes).  The same seed produced ``RULE_TYPE`` on 54 holders and
-    was the root of ``Performance.navigation_id`` as well.
+    interface objects, where Chrome has neither (measured against Chrome 154 on 2026-10-07
+    with a surface-wide probe comparing every member of all 2046 holders a window exposes).
+    The same seed produced ``RULE_TYPE`` on 54 holders and was the root of
+    ``Performance.navigation_id`` as well.
 
     The other half is just as important: a real constant must still be there, and it now comes
     from the interface baseline rather than from a Python attribute.

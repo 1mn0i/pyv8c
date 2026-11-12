@@ -1,6 +1,6 @@
 """Two labels-and-interfaces questions, answered as Chrome answers them.
 
-Measured side by side on 2026-10-06 (``examples/5s/script/encoding_and_touch.py``):
+Measured side by side on 2026-10-06:
 
 * ``new TextDecoder('iso-8859-1')`` -- we raised, Chrome does not: the standard files that
   label under **windows-1252**, so 0x80 decodes to the euro sign and ``encoding`` reports the
@@ -60,9 +60,8 @@ def test_decode_takes_the_bare_array_buffer_chrome_takes(page):
     """``BufferSource`` is an ``ArrayBuffer`` or a view over one, and ``decode`` takes either.
 
     A live run of the challenge handed ``decode`` the bare buffer and got a ``TypeError`` for it
-    twice, which the widget then reported back to the edge (measured 2026-10-10, see
-    ``examples/5s/README.md``).  Chrome answers "ABC" for all three forms here; the two-sided
-    reading is ``examples/5s/script/trace_gaps.py``.
+    twice, which the widget then reported back to the edge (measured 2026-10-10).  Chrome
+    answers "ABC" for all three forms here, as a two-sided reading confirmed.
     """
     assert json.loads(page.evaluate("""JSON.stringify(
         [new Uint8Array([65, 66, 67]),

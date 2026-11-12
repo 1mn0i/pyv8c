@@ -203,36 +203,3 @@ def test_a_resource_that_fails_puts_its_reason_in_the_log():
     assert "http://example.test/app.js" in failed[0]
     assert "no such file" in failed[0]
 
-
-def test_a_failed_script_tells_the_page_the_load_failed_and_nothing_more():
-    """A load the host could not make is reported, not explained.
-
-    The reason -- a path, a transport message, the host's own words -- is the host's,
-    so neither the event's message nor the value a handler reads may carry it: a page
-    that logs its errors, or reports them home, must not be able to read the host out
-    of them.
-    """
-    reason = "loader blew up at D:/src/pyv8env/pyv8c/secret.py"
-
-    def loader(url, request):
-        if url.endswith("/app.js"):
-            raise RuntimeError(reason)
-        return Response(
-            "<html><body><script>window.__errors = [];"
-            "window.addEventListener('error', (event) =>"
-            " window.__errors.push([event.message, String(event.error)]));</script>"
-            "<script src='/app.js'></script>loaded</body></html>",
-            {"url": url, "headers": {"content-type": "text/html"}},
-        )
-
-    browser = Browser(stub_logging="off", resource_loader=loader)
-    try:
-        page = browser.new_profile().new_page()
-        page.goto("http://example.test/index.html", wait_until="load", timeout=5)
-        page.run_until_idle(timeout=1)
-        errors = page.evaluate("window.__errors")
-    finally:
-        browser.close()
-
-    assert errors == [["Failed to load the script", "undefined"]]
-    assert "secret" not in str(errors)

@@ -2,8 +2,7 @@
 
 Each one *is* its payload, so none of them is fetched from the network: Chromium decodes all
 three in place.  A frame that had to be fetched instead would never finish its load, which is
-how a ``data:`` frame used to leave the page waiting (measured against Chrome, see
-``examples/5s/README.md``).
+how a ``data:`` frame used to leave the page waiting (measured against Chrome).
 
 The ``data:`` and ``blob:`` frames report from a script in their own document.  The ``srcdoc``
 one carries markup only and is read through ``contentDocument``; a ``srcdoc`` document *with* a

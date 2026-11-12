@@ -269,8 +269,8 @@ def test_a_section_without_gaps_reads_as_no_measurements(tmp_path):
 
 def test_an_interface_gap_narrows_the_interface_object_only(baseline):
     """``CSS`` carries ``animationWorklet`` on itself, not on a prototype, and Chrome leaves it
-    out -- measured against Chrome 154 on 2026-10-07 with ``examples/5s/script/surface_diff.py``
-    (which is how the two extra getters were found at all)."""
+    out -- measured against Chrome 154 on 2026-10-07 with a two-sided surface diff (which is how
+    the two extra getters were found at all)."""
     raw = collection(baseline).own_members("CSS")
     on_object = {member.name for location, member in raw if location == "interface"}
     on_prototype = {member.name for location, member in raw if location == "prototype"}

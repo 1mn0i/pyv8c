@@ -5,7 +5,7 @@ that created them, so an inline frame inside an ``https`` page answers
 ``isSecureContext === true`` and exposes the secure-context-only ``navigator`` members.  Judging
 such a frame by its own URL instead answered ``false`` with thirty of those members
 ``undefined`` -- which is the probe Cloudflare's widget makes (measured against Chrome
-2026-10-06 with ``examples/5s/script/secure_frame.py``).  A frame of an insecure page has
+on 2026-10-06).  A frame of an insecure page has
 nothing to inherit, so it must stay insecure: the chain is a fallback, not a promotion.
 """
 import json

@@ -2,7 +2,7 @@
 
 The 23:04 trace had ``HTMLBodyElement.replaceChild(undefined, <HTMLDivElement>)`` raise, and a
 raise is only a difference if the other side does not raise: asked of both browsers
-(``examples/5s/script/replace_child.py``, 2026-10-06), Chrome answers the same ``TypeError``
+on 2026-10-06, Chrome answers the same ``TypeError``
 with the same words.  The one thing that did differ was the missing call prefix on
 ``NotFoundError``, which is what this holds.
 """
