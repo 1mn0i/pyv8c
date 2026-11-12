@@ -279,6 +279,11 @@ def _field_reader(field):
     return read
 
 
+@interface('VisibilityStateEntry', 'PerformanceEntry')
+class VisibilityStateEntry(PerformanceEntry):
+    """A document visibility transition in the performance timeline."""
+
+
 @interface('PerformanceMark', 'PerformanceEntry')
 class PerformanceMark(PerformanceEntry):
     """A mark a page made, with whatever detail it attached."""
@@ -464,6 +469,9 @@ class Performance(EventTarget):
     def _entry_from_record(self, record):
         if record.get("kind") == "navigation":
             return self._navigation_entry(record)
+        if record.get("kind") == "visibility-state":
+            return VisibilityStateEntry(record.get("name", "visible"), "visibility-state",
+                                        record.get("start", 0.0), 0.0, self._navigation_id)
         start = float(record.get("start", 0.0))
         end = float(record.get("end", record.get("start", 0.0)))
         size = record.get("decodedBodySize", 0)
@@ -774,5 +782,5 @@ class PerformanceObserver:
 __all__ = [
     "Performance", "PerformanceEntry", "PerformanceMark", "PerformanceMeasure",
     "PerformanceObserver", "PerformanceObserverEntryList", "PerformanceResourceTiming",
-    "PerformanceNavigationTiming",
+    "PerformanceNavigationTiming", "VisibilityStateEntry",
 ]

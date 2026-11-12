@@ -77,6 +77,7 @@ class _PerformanceCapability:
         self.reset()
         self.clock.reset(monotonic=started_at)
         received_at = self.clock.now_ms()
+        self.record("visibility-state", name="visible", start=0.0)
         #: The request was issued when the timeline began, and the response was read by
         #: the time this document commits: the phases in between are the network's.
         return self.record("navigation", name=str(url), start=0.0,
@@ -221,6 +222,7 @@ class _RealmCapability(_RealmCapabilityBase):
 
     def __init__(self, owner):
         super().__init__(owner._tasks, _PerformanceCapability())
+        self.performance.record("visibility-state", name="visible", start=0.0)
         self._owner = owner
 
     @property

@@ -36,3 +36,21 @@ def test_the_origin_is_an_epoch_instant_and_navigation_start_agrees():
             "[performance.timing.redirectStart, performance.timing.redirectEnd]") == [0, 0]
     finally:
         browser.close()
+
+
+def test_visibility_state_entries_for_initial_document_and_changes():
+    browser = Browser(real_network=False, stub_logging="off")
+    try:
+        page = browser.new_profile().new_page()
+        assert page.evaluate("performance.getEntriesByType('visibility-state').length") == 1
+        page.set_content('<body>visible</body>', url='https://example.test/')
+        first = page.evaluate("JSON.stringify(performance.getEntriesByType('visibility-state').map(x => [x.constructor.name,x.name,x.entryType,x.startTime,x.duration]))")
+        assert first == '[["VisibilityStateEntry","visible","visibility-state",0,0]]'
+        assert page.set_visibility(True) is True
+        assert page.set_visibility(True) is False
+        assert page.set_visibility(False) is True
+        assert page.evaluate("JSON.stringify(performance.getEntriesByType('visibility-state').map(x => x.name))") == '["visible","hidden","visible"]'
+        page.set_content('<body>new document</body>', url='https://example.test/next')
+        assert page.evaluate("performance.getEntriesByType('visibility-state').length") == 1
+    finally:
+        browser.close()

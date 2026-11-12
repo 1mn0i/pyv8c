@@ -294,6 +294,7 @@ CORE_CLASSES = (
     ('CryptoKey', 'pyv8c.web.bom.crypto', 'CryptoKey', None),
     ('PerformanceObserver', 'pyv8c.web.bom.performance', 'PerformanceObserver', None),
     ('PerformanceEntry', 'pyv8c.web.bom.performance', 'PerformanceEntry', None),
+    ('VisibilityStateEntry', 'pyv8c.web.bom.performance', 'VisibilityStateEntry', None),
     ('PerformanceMark', 'pyv8c.web.bom.performance', 'PerformanceMark', None),
     ('PerformanceMeasure', 'pyv8c.web.bom.performance', 'PerformanceMeasure', None),
     ('PerformanceResourceTiming', 'pyv8c.web.bom.performance', 'PerformanceResourceTiming', None),

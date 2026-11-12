@@ -208,6 +208,8 @@ class DocumentLifecycle:
         if page.document.hidden:
             return None
         page.document.hidden = True
+        performance = page.services.realm_services.performance
+        performance.record("visibility-state", name="hidden", start=performance.clock.now_ms())
         return self.dispatch_page_event("visibilitychange", page.document, {"bubbles": True})
 
     def dispatch_page_hide(self, persisted=False):
@@ -297,6 +299,9 @@ class DocumentLifecycle:
         if bool(page.document.hidden) == hidden:
             return False
         page.document.hidden = hidden
+        performance = page.services.realm_services.performance
+        performance.record("visibility-state", name="hidden" if hidden else "visible",
+                           start=performance.clock.now_ms())
         page.execution_group.rendering.changed()
         self.dispatch_page_event("visibilitychange", page.document, {"bubbles": True})
         self.dispatch_page_event("freeze" if hidden else "resume", page.document, {"bubbles": False})
