@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=77.0.0", "wheel"]
+requires = ["setuptools>=77.0.3", "setuptools-rust>=1.10,<2", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,6 +7,9 @@ name = "pyv8c"
 dynamic = ["version"]
 description = "A deterministic Chromium-like BOM/DOM environment on pyv8"
 requires-python = ">=3.12"
+# The source project is MIT; the wheel also incorporates V8 and other code.
+# Declare a distribution-wide SPDX expression only after auditing every linked input.
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md", "third_party_licenses/*.txt"]
 # ``uharfbuzz`` shapes text and ``uniseg`` finds where lines may break; both are hard
 # dependencies, because a page's geometry is only right if the text is measured for real.
 dependencies = [
@@ -18,6 +21,12 @@ dependencies = [
     "tldextract>=5.3,<6",
     "idna>=3.6,<4",
 ]
+
+[project.urls]
+Homepage = "https://github.com/ConlinH/pyv8c"
+Repository = "https://github.com/ConlinH/pyv8c"
+Issues = "https://github.com/ConlinH/pyv8c/issues"
+Security = "https://github.com/ConlinH/pyv8c/security/advisories/new"
 
 [project.optional-dependencies]
 # The cycronet engine is optional and serves either role when it is chosen.

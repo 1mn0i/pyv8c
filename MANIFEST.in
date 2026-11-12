@@ -1,4 +1,11 @@
 include README.md
+include docs/en/README.en.md
+include LICENSE
+include THIRD_PARTY_NOTICES.md
+include pyv8/README.md
+include tools/check_license.py
+recursive-include docs/img *.jpg *.png
+recursive-include third_party_licenses *.txt
 include CHROMIUM_VERSION
 include pyv8/V8_VERSION
 include pyv8/v8_build.py
@@ -9,3 +16,9 @@ include pyv8/bootstrap.py
 include pyv8/build.env.example
 recursive-include pyv8/src *.cpp *.h *.def
 recursive-include pyv8c/pyv8c *.py *.pyi py.typed *.json *.zip
+recursive-include pyv8c/audio_native Cargo.toml Cargo.lock *.rs *.md
+prune pyv8c/audio_native/target
+recursive-include docs *.md
+# The ICU data file belongs in wheels only; a locally built sdist must not pick up
+# the machine-specific copy that happens to sit in the source tree.
+global-exclude icudtl.dat
