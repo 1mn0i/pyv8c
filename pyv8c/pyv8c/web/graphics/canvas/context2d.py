@@ -327,8 +327,18 @@ class CanvasRenderingContext2D:
             return
         from PIL import Image
         width, height = data._width, data._height
-        pixels = bytes(int(data._data[index]) for index in range(4 * width * height))
-        source = Image.frombytes('RGBA', (width, height), pixels)
+        pixels = bytearray(int(data._data[index]) for index in range(4 * width * height))
+        # Chromium's canvas stores premultiplied 8-bit channels. Convert back to
+        # straight RGBA for Pillow, retaining the same rounding as a canvas read.
+        for offset in range(0, len(pixels), 4):
+            alpha = pixels[offset + 3]
+            if alpha == 255:
+                continue
+            for channel in range(3):
+                premultiplied = (pixels[offset + channel] * alpha + 127) // 255
+                pixels[offset + channel] = ((premultiplied * 255 + alpha // 2) // alpha
+                                            if alpha else 0)
+        source = Image.frombytes('RGBA', (width, height), bytes(pixels))
         x, y = int(float(number(dx))), int(float(number(dy)))
         if len(dirty) >= 4:
             sx, sy, sw, sh = (int(float(number(value))) for value in dirty[:4])

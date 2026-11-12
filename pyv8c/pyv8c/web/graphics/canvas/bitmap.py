@@ -18,7 +18,10 @@ class ImageData:
 
     def __init__(self, pixels=b"", width=0, height=0, **_):
         self._width, self._height = int(width), int(height)
-        self._data = pyv8.JSTypeArray(list(pixels), pyv8.ArrayType.Uint8ClampedArray)
+        # A typed array passed to the Web constructor stays live and retains its
+        # identity. Iterating the Python wrapper yields indices, not pixel values.
+        self._data = (pixels if isinstance(pixels, pyv8.JSTypeArray)
+                      else pyv8.JSTypeArray(list(pixels), pyv8.ArrayType.Uint8ClampedArray))
 
     def get_width(self): return self._width
     def get_height(self): return self._height

@@ -73,3 +73,29 @@ def test_image_data_dirty_write_ignores_transform_and_uses_live_data():
         'blank': [2, 2, [0, 0, 0, 0]],
         'errors': ['IndexSizeError', 'TypeError', 'TypeError'],
     }
+
+
+def test_image_data_constructor_preserves_typed_array_and_pixels():
+    result = _evaluate('''(() => {
+      const bytes = new Uint8ClampedArray([13,19,32,40,255,255,0,1,255,128,0,2,102,255,102,5]);
+      const image = new ImageData(bytes, 4, 1);
+      const canvas = document.createElement('canvas'); canvas.width = 4; canvas.height = 1;
+      const ctx = canvas.getContext('2d');
+      ctx.putImageData(image, 0, 0);
+      const pixels = Array.from(ctx.getImageData(0, 0, 4, 1).data);
+      image.data[0] = 99;
+      return {same: image.data === bytes, first: bytes[0], pixels};
+    })()''')
+    assert result == {'same': True, 'first': 99,
+                      'pixels': [13,19,32,40,255,255,0,1,255,128,0,2,102,255,102,5]}
+
+
+def test_image_data_canvas_round_trip_matches_premultiplied_pixels():
+    result = _evaluate('''(() => {
+      const pixels = new Uint8ClampedArray([10,20,30,40,255,128,64,1,200,100,50,2,123,231,89,5]);
+      const canvas = document.createElement('canvas'); canvas.width = 4; canvas.height = 1;
+      const context = canvas.getContext('2d');
+      context.putImageData(new ImageData(pixels, 4, 1), 0, 0);
+      return Array.from(context.getImageData(0, 0, 4, 1).data);
+    })()''')
+    assert list(result) == [13,19,32,40,255,255,0,1,255,128,0,2,102,255,102,5]
