@@ -1,5 +1,7 @@
 # IDL 格式与绑定
 
+**简体中文** | [English](../en/pyv8c/idl-format.md)
+
 [文档索引](../README.md)
 
 ## 基线与环境档案

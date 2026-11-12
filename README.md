@@ -1,12 +1,54 @@
 # pyv8c
 
+**简体中文** | [English](docs/en/README.en.md)
+
 pyv8c 是基于 V8 和 Python 的浏览器脚本运行框架。原生桥接由本仓库中的 `pyv8` 项目提供，Python 实现页面、DOM、Web API、资源加载、任务调度和调试接入。适合运行页面脚本、构造可重复的浏览器行为测试，以及通过本地 Chrome 对照完善 Web 能力。
 
 框架提供常用 DOM 与事件、导航、iframe、Worker、Fetch、XMLHttpRequest、WebSocket、存储、部分样式与几何计算，以及 V8 Inspector。接口暴露由 Chromium IDL 和浏览器环境档案共同决定；**接口存在不代表功能完整实现**。
 
+## 分层架构
+
+从左到右是调用方向，从右到左是能力来源；①~④ 表示依赖层次。`pyv8c`（Python）实现页面、DOM、Web API、资源与任务调度，`pyv8`（C++ 扩展）提供 Isolate、Context、句柄与 IDL 原语，两者共同构成单个发行包。
+
+```mermaid
+flowchart LR
+    APP(["① 应用层<br/>pyv8c 公开 API<br/>Browser · Profile · Page"])
+
+    subgraph L1["② pyv8c · Python 平台层"]
+        direction LR
+        P1["platform<br/>Browser · Page · Realm"]
+        P2["engine · features<br/>IDL 装配 · Feature"]
+        P3["web<br/>DOM·BOM·Fetch·Worker"]
+        P4["network<br/>传输 · 加载 · 缓存"]
+    end
+
+    subgraph L2["③ foundation · 基础层（不依赖 Page）"]
+        direction LR
+        F1["任务与执行<br/>任务源 · 微任务 · 执行器"]
+        F2["时钟与渲染<br/>定时器 · rAF · 帧时钟"]
+        F3["值与规则<br/>URL · 环境 · 错误策略"]
+    end
+
+    subgraph L3["④ pyv8 · C++ 原生层"]
+        direction LR
+        N1["Isolate / Context<br/>生命周期 · 微任务"]
+        N2["Handles / Values<br/>跨界值 · 错误族"]
+        N3["IdlSpec / Templates<br/>接口模板 · 回调"]
+        N4["Inspector / Watchdog<br/>调试 · 超时票据"]
+    end
+
+    BASE(["V8 15.4.68<br/>Chromium 154.0.8030.0<br/>IDL 基线 · cp312-abi3"])
+
+    APP --> L1
+    L1 --> L2
+    L2 --> L3
+    L3 --> BASE
+    linkStyle default stroke-width:2px
+```
+
 ## 安装
 
-Windows x64 发行包将框架与 V8 引擎打包为单个 `pyv8c-*-cp312-abi3-win_amd64.whl`。下载构建产物后可执行 `py -m pip install 路径\pyv8c-版本-cp312-abi3-win_amd64.whl`；它不依赖顶层 `pyv8` 发行包。发行包中的原生引擎也可单独使用：
+发行包将框架与 V8 引擎打包为单个 ABI3 wheel，CI 分别构建 Windows x64（`win_amd64`）、Linux x64（`linux_x86_64`）和 macOS arm64（`macosx_arm64`）版本。下载对应平台的构建产物后可执行 `py -m pip install 路径\pyv8c-版本-cp312-abi3-平台.whl`；它不依赖顶层 `pyv8` 发行包。发行包中的原生引擎也可单独使用：
 
 ```python
 from pyv8c import pyv8
@@ -21,60 +63,18 @@ finally:
     context.close()
 ```
 
-此安装包由 Windows workflow 生成，暂不发布到 PyPI。源码开发和发行包均使用 `pyv8c.pyv8` 入口。
+目前暂不发布到 PyPI。源码开发和发行包均使用 `pyv8c.pyv8` 入口。源码构建说明见[开发指南](docs/pyv8c/development.md#源码构建)。
 
-本机构建同一发行包时，先按 `pyv8/README.md` 准备 V8，然后在仓库根目录使用 CPython 3.12：
-
-```powershell
-py -3.12 -m pip install build wheel
-py -3.12 -m build --wheel --outdir dist .
-```
-
-生成的 `pyv8c-*-cp312-abi3-win_amd64.whl` 是单包发行物。
-
-Ubuntu 22.04 x86-64 可以在 Linux 本机准备 V8 并构建 wheel，使用启用 GIL 的
-CPython 3.12、C++20 编译器和 Python 构建工具：
-
-```bash
-python3.12 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip setuptools wheel build
-python setup.py build_v8
-python -m build --wheel --no-isolation
-python -m pip install dist/pyv8c-*-linux_x86_64.whl
-```
-
-如需代理，可向 `build_v8` 传入 `--proxy=http://主机:端口`。首次构建会下载
-V8 和 Chromium 工具链并耗费较长时间及磁盘空间；可通过 `PYV8_V8_JOBS` 控制并行度。
-上述 Linux wheel 已在 Ubuntu 22.04 x86-64 验证基本运行，不代表兼容所有 Linux 发行版。
-
-### Windows、Linux 和 macOS CI
-
-仓库的 GitHub Actions 工作流 `Build wheels` 可手动选择并并行构建三个平台的 wheel。
-Windows 和 macOS arm64 使用 GitHub 托管 runner；Linux 使用带 `pyv8c-v8` 标签的自托管 x64 Ubuntu
-runner。先在仓库 **Settings → Actions → Runners → New self-hosted runner** 中选择
-Linux x64，在虚拟机上按 GitHub 页面提供的命令下载并注册 runner；配置时添加自定义
-标签 `pyv8c-v8`，并让 runner 以安装了 Python 3.12 的用户运行。注册令牌由 GitHub
-页面临时生成，不要提交到仓库。启动 runner 后，在 **Actions → Build wheels → Run workflow**
-勾选需要的平台并手动运行。对应产物为 `windows-wheels`、`linux-wheels` 和
-`macos-arm64-wheels`；Ubuntu 未运行时，可取消勾选 Linux。
-
-Linux 构建会把 V8 放在运行用户的 `~/.cache/pyv8c-ci/v8` 下供后续任务复用；首次
-构建需要足够的磁盘空间和较长时间。若虚拟机访问 V8 需要代理，应在启动 runner
-进程前配置 `http_proxy` 和 `https_proxy`；如果使用系统服务，也需为该服务配置代理。
-Linux 和 macOS 任务检查原生参数桥接和安装后冒烟测试，不代表浏览器完整测试全部通过。
-自托管 runner 会执行工作流代码，应仅用于受信任的工作流和代码来源。
-
-要求启用 GIL 的 CPython 3.12 及以上，并能导入与当前解释器匹配的 `pyv8` 原生扩展。Windows 上已对 CPython 3.15.0 完成原生测试和浏览器常规测试；其他平台需要分别验证。free-threaded CPython 暂不支持。
+要求启用 GIL 的 CPython 3.12 及以上，并能导入与当前解释器匹配的 `pyv8` 原生扩展。三个平台均由 CI 构建 wheel 并执行安装后冒烟与原生测试；CPython 3.12–3.15 的完整浏览器测试矩阵目前只在 Windows 上运行，其他平台仍需按各自环境验证。free-threaded CPython 暂不支持。
 
 仓库包含 `pyv8/`（V8 绑定源码）和 `pyv8c/`（浏览器框架源码）。以下命令在仓库根目录使用 CPython 3.12 执行：
 
 ```powershell
-python312 -m pip install -e ".[network,dev,reference]"
+python312 -m pip install -e ".[dev,reference]"
 python312 -c "from pyv8c import pyv8; print(pyv8.__file__)"
 ```
 
-构建前须配置 V8 构建目录，详见原生项目文档。
+源码开发前须配置 V8 构建目录，详见[原生项目文档](pyv8/README.md)。
 
 默认 HTTP 和 WebSocket 引擎随基础依赖安装。`dev` 安装测试工具，`canvas` 提供 Pillow 绘图，`cronet` 提供可选网络引擎，`benchmark` 提供可选进程监测，`reference` 安装驱动本机 Chrome 的工具，不下载浏览器。原生扩展构建要求见 [pyv8 文档](pyv8/README.md)。
 
@@ -122,7 +122,7 @@ Browser                         框架配置、接口装配和回调线程池
 - [请求头](docs/pyv8c/request-headers.md)、[窗口与同源访问](docs/pyv8c/window-security.md)、[IDL 格式](docs/pyv8c/idl-format.md)。
 - [调试器](docs/pyv8c/devtools.md)、[运行跟踪](docs/pyv8c/tracing.md)。
 
-完整导航见 [文档索引](docs/README.md)。
+完整导航见 [文档索引](docs/README.md)；英文版见 [English documentation](docs/en/README.md)。
 
 ## 能力边界
 
@@ -131,3 +131,33 @@ pyv8c 不包含 Chromium 的完整渲染、进程和安全沙箱体系。样式�
 当前没有实现 OOPIF、完整 COOP/COEP、Origin-Agent-Cluster 和 `document.domain` 模型，也不提供完整 CDP Page、Network、DOM 域。不能以单个网站加载成功或接口数量衡量 Chrome 兼容程度。
 
 具体实现与限制见 [Web 能力与实现范围](docs/pyv8c/web-capabilities.md)。
+
+## 关于性能
+
+> 我都是用 Python 了，你还问性能怎么样，这就不礼貌了。
+
+**pyv8c 用 Python，是为了快速开发和快速验证**。补一个 Web API、改一处行为、拿本机 Chrome 做一次对照，都能立刻跑起来看结果；用运行期性能换开发和验证的迭代速度，是从一开始就做的选择。
+
+优先保证的是浏览器行为的**可复现性**和可控的单次启动成本，而不是脚本吞吐或渲染速度。若你的场景追求极致执行速度，直接使用 V8 原生接口或原生方案更合适。
+
+## 赞赏
+
+> 如果 pyv8c 帮你省下了排查时间，不妨请我喝杯咖啡、抽根烟，或者给我续点 token。当然点个 star、提个 issue 一样让我开心。
+
+| 微信赞赏码 | 支付宝赞赏码 |
+| :---: | :---: |
+| <img src="docs/img/wechat_reward_code.jpg" alt="微信赞赏码" width="220"> | <img src="docs/img/alipay_reward_code.jpg" alt="支付宝赞赏码" width="220"> |
+
+## 许可与预期用途
+
+本项目采用 [MIT License](LICENSE) 开源。V8、Chromium IDL 基线、ICU 数据及第三方依赖各自的许可与版权声明见 [第三方声明](THIRD_PARTY_NOTICES.md)。
+
+**预期用途**：pyv8c 是用于复现浏览器脚本行为的研究与测试工具，面向获得授权的自动化测试、教学演示、Web 兼容性与行为对照研究。使用者应自行确认已取得目标站点或系统所有者的必要授权，并遵守其服务条款与所在司法辖区的适用法律（包括数据保护、网络安全与计算机信息系统相关规定）。
+
+本项目不提供、也不接受以绕过第三方站点访问控制、规避反自动化措施或批量采集真实站点数据为唯一目的的支持请求（issue、讨论与 PR）。请勿在 issue、PR 或示例提交中附带真实站点的凭据、Cookie、挑战令牌、HAR 或其他私有数据。作者不对使用者的具体使用方式承担责任，也不认可任何未授权访问行为；如发现项目内容被用于此类用途，请通过 [安全政策](.github/SECURITY.md) 中的渠道告知，我们会评估并移除相关内容。
+
+本节说明项目的预期用途与社区支持范围，**不构成对 MIT 许可证所授予权利的附加限制**。
+
+## 商标与归属
+
+pyv8c 不是 Google、Chromium、V8 或 Chrome 的官方项目，与之无关联、未获背书。Chrome / Chromium / V8 / Google 为各自权利人的商标或标识；仓库中的 IDL 基线与环境档案仅作为公开接口与运行时行为的事实性参考。上游 BSD-3-Clause 条款禁止借其名义为衍生产品背书，完整条款见 [第三方声明](THIRD_PARTY_NOTICES.md)。

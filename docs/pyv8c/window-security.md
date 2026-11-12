@@ -1,5 +1,7 @@
 # 窗口与同源访问
 
+**简体中文** | [English](../en/pyv8c/window-security.md)
+
 [文档索引](../README.md)
 
 ## Window 与 iframe

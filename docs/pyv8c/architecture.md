@@ -1,5 +1,7 @@
 # 架构设计
 
+**简体中文** | [English](../en/pyv8c/architecture.md)
+
 [文档索引](../README.md)
 
 ## 模块分层

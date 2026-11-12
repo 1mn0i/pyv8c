@@ -1,5 +1,7 @@
 # 原生 IDL 绑定声明
 
+**简体中文** | [English](../en/pyv8/idl-spec.md)
+
 本文说明 `pyv8` 项目的原生扩展 `_pyv8` 中的 `IdlSpec` 及成员描述符。它们用于声明 Python 类型如何暴露为 JavaScript 接口，不是 Web IDL 文本解析器，也不自动实现浏览器 API。
 
 ## 1. 基本声明

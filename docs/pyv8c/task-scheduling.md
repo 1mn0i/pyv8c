@@ -1,5 +1,7 @@
 # 任务调度
 
+**简体中文** | [English](../en/pyv8c/task-scheduling.md)
+
 [文档索引](../README.md)
 
 ## 执行所有权

@@ -1,16 +1,18 @@
-# Bridge kernel
+# 桥接内核
 
-The bridge requires the CPython 3.12 Stable ABI. A wheel built on 3.12 is
-intended for regular GIL-enabled CPython 3.12 through 3.15 on the same OS
-and architecture. Free-threaded Python and subinterpreters are not supported.
-The selected V8 version is 15.4.68.
+**简体中文** | [English](../en/pyv8/bridge-kernel.md)
 
-## Values
+桥接要求 CPython 3.12 Stable ABI。在 3.12 上构建的 wheel 面向
+同一操作系统和架构上启用了 GIL 的常规 CPython 3.12 至 3.15。
+不支持无 GIL（free-threaded）Python 和子解释器。
+所选 V8 版本是 15.4.68。
 
-`Context.exec_js`, JS function calls, property access and host callback
-arguments return primitives, the original Python host object, or a JS handle.
-They do not enumerate JS objects or invoke accessors to convert them.
-The `preserve_arguments` switch and `_to_python` method have been removed.
+## 值
+
+`Context.exec_js`、JS 函数调用、属性访问和宿主回调参数返回原始值、
+原来的 Python 宿主对象或 JS 句柄。它们不枚举 JS 对象，也不调用
+访问器来转换它们。`preserve_arguments` 开关和 `_to_python` 方法
+已被移除。
 
 ```python
 result = context.exec_js('({items: [1, 2]})')
@@ -18,57 +20,57 @@ assert isinstance(result, pyv8.JSObject)
 assert result.to_python() == {'items': [1, 2]}
 ```
 
-`to_python()` recursively materializes arrays and plain objects, preserving
-cycles and shared references. It can run getters and propagate their errors.
-Other objects, including functions and typed arrays, remain handles.
-JS identity is preserved when handles return to V8; Python wrapper identity
-is not promised. Function property access preserves its receiver.
+`to_python()` 递归地物化数组和普通对象，保留
+环和共享引用。它可以运行 getter 并传播其错误。
+其他对象，包括函数和定型数组，仍保持为句柄。
+当句柄返回 V8 时保留 JS 标识；不保证 Python 包装器的
+标识。函数属性访问保留其接收者。
 
-Binary data crosses whole, in one call in either direction. `_bytes()` on a
-`JSObject` returns the bytes a buffer holds or a view looks at; Python `bytes`
-handed back into a realm arrive as a fresh `ArrayBuffer`. Reading a buffer element
-by element across the boundary is what these replace.
+二进制数据整体跨界，在任一方向上都只需一次调用。`JSObject` 上的
+`_bytes()` 返回缓冲区持有的字节或视图所查看的字节；交回 realm 的
+Python `bytes` 会作为新的 `ArrayBuffer` 到达。跨边界逐元素读取
+缓冲区正是这些所替代的做法。
 
-In pyv8c, `Page.evaluate()` materializes the result on the page executor;
-`Page.evaluate_handle()` returns the unmaterialized value. Internal Web API
-code uses handles until its Web IDL conversion explicitly needs Python data.
+在 pyv8c 中，`Page.evaluate()` 在页面执行器上物化结果；
+`Page.evaluate_handle()` 返回未物化的值。内部 Web API
+代码一直使用句柄，直到其 Web IDL 转换明确需要 Python 数据。
 
-## Ownership and entry
+## 所有权与进入
 
-`ExecutionScope` pins the Context and subject, acquires isolate access and
-validates the Context again after waiting. Same-thread nested entries reuse
-the existing locker. Waiting releases the GIL, and so does the window in which
-V8 runs: a crossing into JavaScript gives it up and every callback boundary
-takes it back before host code runs. Cleanup holds it. The current scheduling
-topology is unchanged.
+`ExecutionScope` 固定 Context 和 subject，获取 Isolate
+访问权，并在等待后再次校验 Context。同线程的嵌套进入
+复用现有的锁。等待会释放 GIL，V8 运行的时间窗口同样
+会释放 GIL：进入 JavaScript 的跨界会放弃 GIL，每个回调
+边界都会在宿主代码运行前把它取回。清理持有 GIL。当前
+调度拓扑保持不变。
 
-Contexts move from Active to Closing to Closed. Closing rejects new entry.
-In-flight callbacks retain their metadata and finish before deferred teardown.
-Closing invalidates all registered handles, including function receivers,
-scripts and exception state. Explicit close and GC use the same resource
-cleanup; GC does not dispatch page lifecycle events.
+Context 从 Active 变为 Closing 再变为 Closed。
+Closing 拒绝新的进入。进行中的回调保留其元数据，并在延迟拆除
+之前完成。Closing 使所有已注册句柄失效，包括函数接收者、
+脚本和异常状态。显式关闭和 GC 使用相同的资源清理；GC
+不派发页面生命周期事件。
 
-ContextResources indexes host owners, callback anchors, wrappers and realm
-dependencies. Python references are visible through tp_traverse. The Isolate
-coordinates V8 entry and pending cleanup, not strong Python callback roots.
-V8 External values point to native ownership records rather than Python
-objects. Weak callbacks enqueue preallocated records; decrefs occur outside
-the V8 weak phase. Cross-isolate handles are rejected. Same-isolate transfers
-conservatively retain the source until either Context closes.
+ContextResources 为宿主所有者、回调锚点、包装器和 realm
+依赖建立索引。Python 引用通过 tp_traverse 可见。Isolate
+协调 V8 进入和待处理清理，而不是强 Python 回调根。
+V8 External 值指向原生所有权记录，而非 Python 对象。
+弱回调将预分配记录入队；减引用发生在 V8 弱阶段之外。
+跨 Isolate 句柄会被拒绝。同 Isolate 转移保守地保留源，
+直到任一 Context 关闭。
 
-PythonBoundary translates native C++ failures at Python API slots;
-CallbackBoundary translates failures at installed host callback boundaries.
-Allocation failure is not a promise that a V8 heap OOM can be recovered.
-This is an in-process embedding, not a hostile-code security sandbox.
+PythonBoundary 在 Python API 槽位处转换原生 C++ 失败；
+CallbackBoundary 在已安装的宿主回调边界处转换失败。
+分配失败并不承诺 V8 堆内存 OOM 可以被恢复。
+这是进程内嵌入，而非针对恶意代码的安全沙箱。
 
-## Performance and validation
+## 性能与验证
 
-`benchmarks/bridge.py` runs five child processes, each with five warmup batches
-and twenty measured batches. JSON includes raw samples, binary SHA-256 and
-source revision. Run both checkouts with the same V8/compiler configuration.
-The hot-path geometric mean includes callbacks, methods, accessors, host
-object roundtrip and exceptions. Trace, DOM and page lifecycle are reported
-separately. Run benchmarks without concurrent builds or tests.
+`benchmarks/bridge.py` 运行五个子进程，每个包含五个预热批次
+和二十个测量批次。JSON 包含原始样本、二进制 SHA-256 和
+源码版本。请用相同的 V8/编译器配置运行两份检出。
+热路径几何平均包含回调、方法、访问器、宿主对象往返和异常。
+Trace、DOM 和页面生命周期单独报告。运行基准时不要
+并发进行构建或测试。
 
 ```powershell
 $env:PYTHONPATH = "$PWD\pyv8;$PWD\pyv8c"    # run from the repository root
@@ -78,85 +80,85 @@ python benchmarks/plot_results.py --input "$env:TEMP/lifecycle-current.json" --o
 python -m pytest -q
 ```
 
-The target is at least 15% lower hot-path geometric mean elapsed time, with
-no stable regression above 5% for an individual core or lifecycle workload.
-Cross-platform and sanitizer results must be reported separately from local
-Windows tests; a configured validation command is not a successful run.
-`pyv8/tools/validate_linux.sh` enables ASan/UBSan for the bridge. Full V8 coverage
-also requires a V8 library built with matching sanitizer instrumentation.
+目标是热路径几何平均耗时至少降低 15%，且单个核心或
+生命周期工作负载不出现超过 5% 的稳定回归。跨平台和
+sanitizer 结果必须与本地 Windows 测试分开报告；配置了
+验证命令并不等于成功运行。`pyv8/tools/validate_linux.sh`
+为桥接启用 ASan/UBSan。完整的 V8 覆盖还要求 V8 库
+使用匹配的 sanitizer 插桩构建。
 
 
-## Native review corrections (2026-10-14)
+## 原生评审修正（2026-10-14）
 
-`JSObject._buffer_view()` exports only fixed-size backing stores. Resizable
-ArrayBuffers, growable SharedArrayBuffers and their views raise TypeError;
-`bytes(value)` remains available for copying their current range. A backing-store
-reference alone cannot pin committed memory against ArrayBuffer.resize(). Fixed
-buffer exports remain read-only, honor buffer flags, and reject PyBUF_WRITABLE.
+`JSObject._buffer_view()` 仅导出固定大小的 BackingStore。可调整大小的
+ArrayBuffer、可增长的 SharedArrayBuffer 及其视图会抛出 TypeError；
+`bytes(value)` 仍可用于复制其当前范围。仅凭 BackingStore 引用无法在
+ArrayBuffer.resize() 时锁定已提交内存。固定缓冲区导出仍为只读、
+遵守缓冲区标志，并拒绝 PyBUF_WRITABLE。
 
-Entering a different isolate while already holding an isolate never waits for a
-contended entry lock: it raises RuntimeError. Uncontended nesting, returning to
-an already-held isolate and ordinary top-level waiting remain supported. Hosts
-should dispatch contended cross-isolate work after returning from the callback.
-Legacy entry macros also stop before constructing V8 scopes when entry fails.
+在已持有某个 Isolate 时进入另一个 Isolate，绝不会等待有争用的
+进入锁：而是抛出 RuntimeError。无争用的嵌套、返回已持有的
+Isolate 以及普通的顶层等待仍受支持。宿主应在从回调返回后
+再派发有争用的跨 Isolate 工作。进入失败时，旧有进入宏也会
+在构造 V8 作用域之前停止。
 
-Watchdog deadlines use a growing stack: every nested scope has its own deadline
-entry and removes exactly that entry on unwind. Nesting past eight levels no
-longer drops an outer deadline. Timeout and exception unwind tests run in child
-processes and verify that subsequent execution still succeeds.
+Watchdog 截止时间使用可增长的栈：每个嵌套作用域都有自己的
+截止时间条目，并在展开时恰好移除该条目。嵌套超过八层不再
+丢弃外层截止时间。超时和异常展开测试在子进程中运行，并
+验证后续执行仍能成功。
 
-`current_context()` and `incumbent_context()` without an explicit isolate query
-this thread's active isolate first. Outside execution they retain the default
-isolate fallback. An explicit Isolate argument still queries that isolate.
-This prevents Worker callbacks from acquiring a parent's unrelated isolate merely
-to discover their own context during serialization or transferable processing.
-
-
-## Build and ownership contracts (2026-10-14)
-
-Normal builds track project .h/.def and source content, not just .cpp timestamps.
-`build/pyv8-extension.json` associates inputs and compiler identity with the built
-binary SHA256. Header-only edits invalidate the artifact without requiring force.
-
-Context/handle work that waits uses ExecutionScope. import_handle revalidates both
-the target and source handle after acquiring the isolate. Closed handles never
-recreate dependency records. Entry counters and pending queues are private;
-Inspector and close registration own their references and rollback locally.
+不带显式 isolate 的 `current_context()` 和 `incumbent_context()`
+会先查询本线程的活动 Isolate。在执行之外，它们保留默认的
+Isolate 回退。显式的 Isolate 参数仍查询该 Isolate。这可防止
+Worker 回调仅仅为了在序列化或可转移对象处理期间发现自己的
+Context，就去获取父级无关的 Isolate。
 
 
-## Maintainability contracts (2026-10-14)
+## 构建与所有权契约（2026-10-14）
 
-The build resolves and initializes the actual compiler before comparing inputs.
-Tool paths, executable digests, SDK include/library paths and compiler options
-participate in the fingerprint; an automatically selected toolchain change must
-rebuild the extension. Build preparation code is also an input. Layout checking
-reads literal Extension include roots through AST and resolves quoted includes
-against the including file and those roots, rather than matching basenames.
+常规构建跟踪项目的 .h/.def 和源文件内容，而不只是 .cpp 时间戳。
+`build/pyv8-extension.json` 将输入和编译器标识与已构建二进制的
+SHA256 关联。仅头文件的改动无需强制即可使产物失效。
 
-Handler storage and IdlSpec constructor metadata expand handler_table.def.
-Runtime contract tests require each handler to have a declared stub keyword,
-a None default, immutable replacement, and consistent callback validation.
-BufferRange owns its BackingStore and describes the current byte offset/length;
-copying and fixed-store exporting share that calculation. Resizable storage
-continues to refuse zero-copy exports. Ranges are not cached across JS execution.
+需要等待的 Context/句柄工作使用 ExecutionScope。import_handle 在获取
+Isolate 后重新校验目标和源句柄。Closed 句柄绝不重建依赖记录。
+进入计数器和待处理队列是私有的；Inspector 和关闭注册自行持有
+其引用并在本地回滚。
 
-A DeadlineScope owns an opaque ticket; Context manual deadlines have a separate
-owner. clear_deadline removes only the newest manual ticket of that Context,
-and is a no-op when none exists. Logical close releases all manual tickets of
-that Context, even if binding metadata cannot be freed until the outer entry
-returns. Cleanup can withdraw that deadline's undelivered idle abort, but cannot
-withdraw explicit terminate() or heap termination. Idle expiry is delivered on
-the next crossing once unless its owner clears/closes it first.
 
-Termination transitions distinguish requesting, V8 issuance, pending delivery,
-active unwind, completion and resumption. A later entry cannot cancel an abort
-before TerminateExecution has actually returned; nested unwind cannot claim the
-outer crossing has finished. DeadlineScope start/stop are void and idempotent;
-allocation failures propagate through the existing native exception boundary.
-These ownership changes do not claim recovery from every V8 fatal OOM scenario.
+## 可维护性契约（2026-10-14）
 
-Context(timeout=None) selects zero; exec_js(timeout=None) inherits the Context
-setting. Non-finite or unrepresentable deadlines raise ValueError. Invalid
-argument parsing returns TypeError before touching V8 values. The actual keyword
-is exec_js(program=...), now correctly named in the stub; callers should replace
-an unsupported script= keyword with program= or use the positional argument.
+构建在比较输入之前先解析并初始化实际使用的编译器。工具路径、
+可执行文件摘要、SDK include/library 路径和编译器选项都参与
+指纹；自动选择的工具链发生变化时必须重新构建扩展。构建
+准备代码也是输入之一。布局检查通过 AST 读取字面的 Extension
+include 根目录，并针对包含文件和这些根目录解析引号 include，
+而不是匹配基本文件名。
+
+handler 存储和 IdlSpec 构造函数元数据展开 handler_table.def。
+运行时契约测试要求每个 handler 具有声明的 stub 关键字、
+None 默认值、不可变替换，以及一致的回调校验。BufferRange
+持有其 BackingStore 并描述当前字节偏移量/长度；复制和
+固定存储导出共享该计算。可调整大小的存储继续拒绝零拷贝
+导出。范围不会跨 JS 执行缓存。
+
+DeadlineScope 持有一张不透明票据；Context 手动截止时间有
+单独的所有者。clear_deadline 仅移除该 Context 最新的手动
+票据，且在不存在时为空操作。逻辑关闭会释放该 Context 的
+所有手动票据，即使原生绑定元数据要等到外层进入返回后
+才能释放。清理可以撤回该截止时间尚未投递的空闲中止，
+但不能撤回显式的 terminate() 或堆终止。空闲到期会在
+下一次跨界投递一次，除非其所有者先清除/关闭它。
+
+终止状态转换区分请求中、V8 下发、待投递、活动展开、
+完成和恢复。后续的进入不能在 TerminateExecution 实际返回
+之前取消中止；嵌套展开不能宣称外层跨界已完成。DeadlineScope
+的 start/stop 为 void 且幂等；分配失败通过现有的原生异常
+边界传播。这些所有权变更并不宣称能从每一种 V8 致命 OOM
+场景中恢复。
+
+Context(timeout=None) 选择零；exec_js(timeout=None) 继承 Context
+设置。非有限或无法表示的截止时间抛出 ValueError。无效的
+参数解析在触及 V8 值之前返回 TypeError。实际的关键字是
+exec_js(program=...)，现已在 stub 中正确命名；调用方应把
+不受支持的 script= 关键字替换为 program=，或改用位置参数。

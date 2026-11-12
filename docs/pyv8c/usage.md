@@ -1,5 +1,7 @@
 # 使用指南
 
+**简体中文** | [English](../en/pyv8c/usage.md)
+
 [文档索引](../README.md)
 
 ## 创建与关闭

@@ -1,5 +1,7 @@
 # 资源加载
 
+**简体中文** | [English](../en/pyv8c/resource-loading.md)
+
 [文档索引](../README.md)
 
 ## 请求管线

@@ -1,5 +1,7 @@
 # 调试器
 
+**简体中文** | [English](../en/pyv8c/devtools.md)
+
 [文档索引](../README.md)
 
 ## 启动与连接

@@ -1,9 +1,11 @@
-# Architecture
+# 架构
 
-What the binding is made of, and what holds the pieces together.  `source-layout.md`
-says where a file goes; this says why the parts are what they are.
+**简体中文** | [English](../en/pyv8/architecture.md)
 
-## The layers
+绑定层由哪些部分组成，以及是什么把这些部分连在一起。`source-layout.md`
+说明一个文件该放在哪里；本文说明这些部分为什么是现在这个样子。
+
+## 层次
 
 ```
 Python                 pyv8/            the package: flags, tracing helpers, devtools
@@ -18,165 +20,170 @@ isolate                isolate/         the isolate, the realm, and their lifeti
 shims                  *.h at the root  ABI3 and V8 API adapters
 ```
 
-A file may include its own layer and the ones below it.  The exceptions are
-listed as exact relative source/target edges in `tools/check_layout.py` under `COMPOSITION_EDGES`, each with a reason:
-an aggregate header, the module entry point, and the five files whose job is to
-tie layers together (a realm building interfaces, a converter reaching into the
-handle types it produces).  `python tools/check_layout.py --enforce` holds the
-tree to that, and to two build files: `setup.py` has to offer every group as an
-include root, because sources include their neighbours by bare name, and
-`pyproject.toml` has to name package data that exists.
+一个文件可以 include 自己所在层以及更低层的头文件。例外以精确的
+source/target 相对路径边的形式列在 `pyv8/tools/check_layout.py` 的
+`COMPOSITION_EDGES` 中，每条都附有原因：一个聚合头文件、
+模块入口点，以及五个负责把各层连接起来的文件（Realm 构建接口，
+转换器触达它所生成的句柄类型）。`python pyv8/tools/check_layout.py --enforce`
+用这些规则约束目录树，同时也约束两个构建文件：`setup.py` 必须把每个分组
+都作为 include 根目录，因为源文件按裸名 include 相邻文件；
+`pyproject.toml` 必须声明实际存在的包数据。
 
-## Lifetimes, in the order they are nested
+## 生命周期：按嵌套顺序
 
-**The isolate** owns the V8 heap, the interned strings (`V8StringCache`, one entry
-per `V8StringId`), the pair table's owners, and the callback data.  Everything
-that belongs to it is torn down in `IsolateState::shutdown`, in one order that
-matters: reporters first (they reach into Python and must not run while the
-isolate is being taken apart), then the inspectors built on it, then the Python
-references, then `Isolate::Dispose`.
+**Isolate** 拥有 V8 堆、驻留字符串（`V8StringCache`，
+每个 `V8StringId` 一项）、配对表的所有者以及回调数据。
+属于它的一切都在 `IsolateState::shutdown` 中按一个要紧的顺序拆除：
+先是报告器（它们会进入 Python，不能在 Isolate 拆解过程中运行），
+然后是建立在它之上的 Inspector，然后是 Python 引用，
+最后是 `Isolate::Dispose`。
 
-**The realm** (`context_c`) owns a V8 context, the classes installed into it, and
-the Python objects it must keep alive.  Those references are listed once, in
-`context_gc_fields`, which `context_traverse` and `context_finish_close` both
-walk -- the two used to be written out by hand, one edit apart from disagreeing.
+**Realm**（`context_c`）拥有一个 V8 Context、安装进其中的类，
+以及必须保活的 Python 对象。这些引用只在 `context_gc_fields` 里列一次，
+`context_traverse` 和 `context_finish_close` 都遍历它 —— 这两处过去是手写的，
+只差一次编辑就会彼此不一致。
 
-**The pair table** is what makes `Py -> JS` identity work: a Python object and the
-JavaScript object that stands for it in one realm, keyed by the Python object's
-address.  It lives in `ContextLifetime`, which outlives the context so that a
-handle closed later reads an empty table rather than freed memory, and it holds
-no strong reference on either side -- the entry *is* the `PythonObjectOwner` that
-holds the one strong reference to the Python object, and it is erased in the same
-step that releases it.  Neither side can be kept alive by the table, and neither
-can be collected out from under it.
+**配对表**让 `Py -> JS` 的标识成立：一个 Python 对象与在同一 Realm 中
+代表它的 JavaScript 对象，以 Python 对象的地址为键。
+它位于 `ContextLifetime` 中，后者的生命周期长于 Context，
+因此稍后关闭的句柄读到的是一张空表，而不是已释放的内存。
+它对两侧都不持有强引用 —— 表项*本身*就是 `PythonObjectOwner`，
+持有对 Python 对象唯一的强引用，并在释放它的同一步中被擦除。
+表既不会让任何一侧保活，
+也不会让任何一侧在它不知情时被回收。
 
-**Handles** (`js_object`, `js_function`, `jspromise`, `jstypedarray`, `js_value`)
-are Python objects standing for V8 values.  Each holds a persistent handle, counts
-it in `live_v8_handles_`, and participates in the context's handle registry: a
-context can be closed, which invalidates every handle, or collected, which happens
-only when no handle is left.  A handle that outlives its realm answers with an
-error -- "no active V8 isolate" or "closed" -- and never reads V8.
+**句柄**（`js_object`、`js_function`、`jspromise`、`jstypedarray`、`js_value`）
+是代表 V8 值的 Python 对象。每个都持有一个持久句柄，在 `live_v8_handles_` 中计数，
+并参与 Context 的句柄注册表：Context 可以被关闭，从而让所有句柄失效；
+也可以被回收，而这只在没有剩余句柄时发生。生命周期长于其 Realm 的句柄
+会以错误应答 —— "no active V8 isolate" 或 "closed" ——
+并且绝不读取 V8。
 
-## Threads
+## 线程
 
-An isolate can host multiple realms; iframe realms can share their parent heap.
-V8 execution is mutually exclusive per isolate. Native entry can originate on
-different threads, while pyv8c separately owns task/DOM thread affinity.  `ExecutionScope` is how a Python entry point says "I am entering
-this realm": it takes the isolate lock and builds the handle and context scopes the
-work needs.  `isolate/entry.h` provides Isolate-only scopes for initialization, teardown and
-already-entered handle construction. It does not substitute for Context entry or
-post-wait validation.  Waiting for the isolate lock releases the GIL, and so does the window
-in which V8 actually runs: `CallbackBoundary` takes it back at every V8 -> Python
-entry, which is the discipline the pair table and the owner lists rely on
-(`context_resources.cpp` says so where it matters).
+一个 Isolate 可以承载多个 Realm；iframe Realm 可以共享父堆。
+同一 Isolate 内的 V8 执行互斥。原生入口可以来自不同线程，
+而 pyv8c 单独负责任务/DOM 的线程归属。`ExecutionScope` 是 Python 入口点
+声明"我要进入这个 Realm"的方式：它获取 Isolate 锁，并建立工作所需的
+句柄作用域与 Context 作用域。`isolate/entry.h` 提供仅涉及 Isolate 的作用域，
+用于初始化、拆除以及已进入状态下的句柄构造。它不能替代 Context 进入，
+也不能替代等待之后的校验。等待 Isolate 锁会释放 GIL，
+V8 实际运行的窗口同样如此：`CallbackBoundary` 在每次 V8 -> Python 进入时
+把它取回，这是配对表和所有者清单所依赖的约定
+（`context_resources.cpp` 在要紧处有说明）。
 
-## The boundary
+## 跨界边界
 
-`values/` is the direction-of-travel split: `convert_to_javascript.cpp` and
-`convert_to_python.cpp`.  Between them sit the two rules that keep the boundary
-honest:
+`values/` 按行进方向拆分：`convert_to_javascript.cpp` 与
+`convert_to_python.cpp`。两者之间有两条让边界保持
+诚实的规则：
 
-* A value crossing back and forth keeps its identity where the host can tell the
-  difference: `ps_from_js`/`js_from_py` remember the pairs they made.
-* A failure has to arrive as the failure it was.  A JavaScript exception becomes a
-  Python exception carrying the original value; a Python exception raised inside a
-  callback is re-thrown into JavaScript; and a failure with no exception of its own
-  is given a message, because CPython reports "returned NULL without setting an
-  exception" as a `SystemError` about the binding rather than about the value.
+* 往返跨界的值在宿主能区分时保持标识：`ps_from_js`/`js_from_py`
+  记住自己建立的配对。
+* 失败必须以它本来的样子抵达。JavaScript 异常变成携带原始值的
+  Python 异常；回调内部抛出的 Python 异常被重新抛回 JavaScript；
+  而本身没有异常的失败会被赋予一条消息，因为 CPython 会把
+  "returned NULL without setting an exception" 报成关于绑定层
+  而非关于该值的 `SystemError`。
 
-## Errors
+## 错误
 
-The binding owns the standard error family: `pyv8.JsError` and the six types beside it,
-each deriving from the builtin its error stands for, so a host catching that builtin keeps
-catching what it always did.  A host joins the family by inheriting one of them, and that
-inheritance is the whole declaration -- there is no table to install, nothing to declare
-before a realm runs, and no name to keep in step.  A class the family does not contain is
-the host's own failure, which no realm is ever shown, because the crossing is terminated
-and the exception is raised at the boundary that began it.  The family is stated in one
-place, `values/error_family.cpp`: a table the module publishes itself, so no second copy
-of the names exists to fall out of step.  A realm constructor that is not one of the
-standard names is declared on the class itself, the way `DOMException` says it is shown
-as `DOMException` with `__v8_error_shape__` -- one triple of (constructor name,
-constructor argument attributes, copied (python, JavaScript) field pairs).
-What a realm is shown is the error itself: the host's own frames and file paths are not
-put on the object, so a script that catches it -- or reports it -- learns nothing about
-the host's side of the failure.
-Uncaught exceptions and unhandled rejections are reported through the hooks installed
-with `Context.set_error_hooks`, which is also where a host that wants the page's
-`error` event gets its chance.
+绑定层拥有标准错误族：`pyv8.JsError` 及其旁边的六个类型，
+每个都派生自它所代表的错误对应的内建类型，
+因此捕获该内建类型的宿主仍然捕获它一直捕获的东西。
+宿主通过继承其中之一加入错误族，而这个继承就是全部声明 ——
+没有需要安装的表，不需要在 Realm 运行前声明任何东西，
+也没有需要保持同步的名字。错误族不包含的类属于宿主自己的失败，
+任何 Realm 都不会看到它，因为跨界被终止，
+异常在发起它的边界处抛出。错误族在一处声明：
+`values/error_family.cpp` 中的一张表，由模块自己发布，
+因此不存在第二份可能失同步的名字。
+不属于标准名字的 Realm 构造函数声明在类自身上，
+就像 `DOMException` 用 `__v8_error_shape__` 说明它以
+`DOMException` 呈现 —— 一组三元组（构造函数名、
+构造函数参数属性、被复制的 (python, JavaScript) 字段对）。
+Realm 看到的是错误本身：宿主自己的栈帧与文件路径
+不会放到对象上，因此捕获它 —— 或上报它 —— 的脚本
+不会得知宿主侧失败的任何信息。未捕获异常与未处理的 rejection
+通过 `Context.set_error_hooks` 安装的钩子报告，希望获得页面 `error` 事件的宿主也在这里获得机会。
 
-## Interfaces
+## 接口
 
-`interfaces/` turns a declaration into templates and callbacks:
+`interfaces/` 把声明变成模板和回调：
 
 ```
 IdlSpec (Python)   ->  py_class (one per class per context)  ->  FunctionTemplate
                    ->  CallbackData (one per member per context) -> info.Data()
 ```
 
-`AttributeSpec`/`MethodSpec`/`ConstantSpec` are the host's declarations;
-`InstallAttribute` and `InstallOperation` turn them into templates; at call time
-`IsolateState::callback_target` turns `info.Data()` back into the spec, and
-`py_class_handler` reaches the Python callable by `HandlerId`.  Interceptors are
-per class, and the window's own name table is a separate, layered thing:
-`pyclass_interceptors.cpp` implements both halves, and the note in
-`tests/test_window_name_table.py` explains what an index means to it.
+`AttributeSpec`/`MethodSpec`/`ConstantSpec` 是宿主的声明；
+`InstallAttribute` 和 `InstallOperation` 把它们变成模板；调用时
+`IsolateState::callback_target` 把 `info.Data()` 还原成 spec，
+`py_class_handler` 通过 `HandlerId` 找到 Python callable。
+拦截器是按类的，而 window 自身的名称表是另一套分层的东西：
+`pyclass_interceptors.cpp` 实现这两个部分，
+`pyv8/tests/test_window_name_table.py` 中的说明解释了一个下标对它的含义。
 
-## What is checked, and where
+## 检查项与所在位置
 
-| Decision | Held by |
+| 决策 | 由谁保证 |
 |---|---|
-| Layer direction, build files | `tools/check_layout.py --enforce` |
-| The public surface: stubs, exports, the extension | `tests/test_public_surface.py` |
-| Identity and lifetime of the pair table | `tests/test_memory_ownership.py` |
-| Attribute protocol: hooks, errors, subscript | `tests/test_jsobject.py` |
-| The window name table and indices | `tests/test_window_name_table.py` |
-| Cost of crossing, installing, strings | `benchmarks/` |
+| 层次方向、构建文件 | `pyv8/tools/check_layout.py --enforce` |
+| 公开接口面：stub、导出、扩展 | `pyv8/tests/test_public_surface.py` |
+| 配对表的标识与生命周期 | `pyv8/tests/test_memory_ownership.py` |
+| 属性协议：钩子、错误、下标 | `pyv8/tests/test_jsobject.py` |
+| window 名称表与下标 | `pyv8/tests/test_window_name_table.py` |
+| 跨界、安装、字符串的成本 | `benchmarks/` |
 
-## Structured-clone callback lifetime
+## 结构化克隆回调的生命周期
 
-`handles/serialization.cpp` owns the serializer and its temporary Python stream
-wrappers; `values/serialization.h` declares the conversion protocol. Streams are
-valid only on the callback's creating thread and are invalidated on both success
-and failure. Serializer values and transfer entries use the ordinary conversion
-path, including closed-context and foreign-isolate checks. Host callbacks may
-reenter JavaScript through V8's explicit allow scope. A Python callback failure
-is checked even when V8 reports a successful write or read, preserving the original
-exception rather than returning a value with an exception set.
+`handles/serialization.cpp` 拥有序列化器及其临时 Python 流包装器；
+`values/serialization.h` 声明转换协议。流仅在回调的创建线程上有效，
+成功与失败时都会失效。序列化器的值与转移项走常规转换路径，
+包括已关闭 Context 与外部 Isolate 的检查。
+宿主回调可以通过 V8 的显式允许作用域重入 JavaScript。
+即使 V8 报告写入或读取成功，Python 回调失败仍会被检查，
+从而保留原始异常，
+而不是带着已设置的异常返回一个值。
 
 
-## Architecture contracts after the 2026-10-14 review
+## 2026-10-14 评审后的架构契约
 
-`bridge_base.h` exports Python/V8 ABI shims and exception/GIL boundaries only;
-`pyv8.h` is private module composition. Lower units include each contract they
-consume. `ExecutionScope` is mandatory for Context/handle operations that can wait;
-owner and handle state must be checked after entry. Host-only diagnostic reads do
-not need a V8 entry. `import_handle` and trace configuration use this contract.
+`bridge_base.h` 只导出 Python/V8 ABI shim 以及异常/GIL 边界；
+`pyv8.h` 是私有的模块组合。较低层单元 include 它们所消费的每个契约。
+`ExecutionScope` 对可能等待的 Context/句柄操作是必需的；
+进入之后必须重新校验所有者与句柄状态。仅宿主的诊断读取不需要 V8 进入。
+`import_handle` 与跟踪配置使用该契约。
 
-`IsolateLockScope` alone modifies private entry counters/locks. IsolateState owns
-Inspector waiter registration and deferred Context close, including references
-and failed-allocation rollback. ContextResources registries are private to the
-Context lifecycle functions and IsolateState; dependency unlinking is an operation
-of that owner, and HandleRegistration delegates to the registration functions.
+只有 `IsolateLockScope` 修改私有的进入计数器/锁。IsolateState 拥有
+Inspector waiter 注册与延迟 Context 关闭，包括引用与分配失败回滚。
+ContextResources 的注册表是 Context 生命周期函数与 IsolateState 私有的；
+依赖解除链接是该所有者的操作，
+HandleRegistration 委托给注册函数。
 
-Isolate selection declares DefaultOnly, ActiveOrDefault or Explicit. It does not
-change the public API's established policy: GC uses default, Context queries and
-callback constructors use active/default, explicit owners are validated explicitly.
-pyv8c retains scheduling and Web API ownership; this kernel supplies entry safety.
+Isolate 选择声明 DefaultOnly、ActiveOrDefault 或 Explicit。
+它不改变公开 API 的既定策略：GC 用 default，Context 查询与回调构造函数用 active/default，
+显式所有者被显式校验。pyv8c 保留调度与 Web API 所有权；
+这个内核提供进入安全性。
 
-The extension declares every .h/.def as a build dependency. Its manifest records
-source-content identity, ABI, compiler inputs, actual compiler and binary digest;
-failed builds do not publish a new manifest. Rebuilding unchanged sources must
-skip compilation. Architecture negative tests must reject new composition edges.
+扩展把每个 .h/.def 都声明为构建依赖。其构建清单记录
+源码内容标识、ABI、编译器输入、实际编译器与二进制摘要；
+构建失败不会发布新清单。源码未变时重新构建必须跳过编译。
+架构反向测试必须拒绝新的组合边。
 
 
 ## 显式微任务队列
 
-`MicrotaskQueue` 属于 Isolate 层，记录创建线程并持有计数的 V8 根。
-Context 通过 `microtask_queue=` 关联队列，多个 Context 可以共享同一个队列。
-省略参数的独立调用仍走原来的自动模式，因此不能把 Context 身份等同于微任务队列身份。
-显式模式的普通 V8 入口不自动执行检查点；HTML 清理边界需要宿主调度层接入。
+`MicrotaskQueue` 属于 Isolate 层：它记录创建线程并持有引用计数的 V8 根。
+Context 通过 `microtask_queue=` 附着到某个队列，
+多个 Context 可以共享一个队列。省略该参数的独立调用
+仍使用原来的自动模式，因此不能把 Context 标识
+当作微任务队列标识。在显式模式下，普通 V8 入口点
+不会自动运行检查点；HTML 清理边界
+必须由宿主调度层接上。
 
-队列存储、线程检查及释放放在 `microtask_queue.*`，类型注册通过 Isolate 接口完成。
-检查点的异常转换保留在 `context.cpp` 的组合边界，避免 Isolate 层反向依赖上层 crossing 异常转换。
-详见 [显式微任务队列](microtask-queue.md)。
+队列存储、线程检查与释放位于 `microtask_queue.*`；
+类型注册通过 Isolate 接口完成。检查点的异常转换留在
+`context.cpp` 的组合边界，这样 Isolate 层不会反向依赖
+位于其上方的跨界级异常转换。参见
+[显式微任务队列](microtask-queue.md)。

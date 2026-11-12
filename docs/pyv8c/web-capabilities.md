@@ -1,5 +1,7 @@
 # Web 能力与实现范围
 
+**简体中文** | [English](../en/pyv8c/web-capabilities.md)
+
 [文档索引](../README.md)
 
 ## 二进制与消息

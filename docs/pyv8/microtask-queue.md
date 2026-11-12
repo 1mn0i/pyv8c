@@ -1,5 +1,7 @@
 # 显式微任务队列
 
+**简体中文** | [English](../en/pyv8/microtask-queue.md)
+
 `MicrotaskQueue` 用于让宿主明确表达 Agent 的微任务归属。同一 Isolate 内的多个 Context 可以共享队列，也可以使用互相隔离的队列。创建 Context 时省略 `microtask_queue`，仍使用既有的 V8 自动队列模式。
 
 ```python

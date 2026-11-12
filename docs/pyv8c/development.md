@@ -1,5 +1,7 @@
 # 开发指南
 
+**简体中文** | [English](../en/pyv8c/development.md)
+
 [文档索引](../README.md)
 
 ## 环境与工作约定
@@ -8,15 +10,63 @@
 
 ```powershell
 $env:PYTHONUTF8 = "1"
-python312 -m pip install -e ".[network,dev,reference]"
+python312 -m pip install -e ".[dev,reference]"
 python312 -c "import pyv8c; from pyv8c import pyv8; print(pyv8.__file__, pyv8c.__file__)"
 ```
 
-构建前须配置 V8 构建目录，详见原生项目文档。使用 Python 3.15 时按[项目安装说明](../../README.md#安装)先以 Python 3.12 构建 ABI3 wheel。
+构建前须配置 V8 构建目录，详见原生项目文档。使用 Python 3.15 时先按下方说明以 Python 3.12 构建 ABI3 wheel。
 
 修改前记录仓库的工作区状态，保留已有修改。核对实际加载的原生二进制、解释器、IDL、环境档案和 Chrome；修改 C++ 后必须重建正在使用的扩展，不能只用旧二进制跑 Python 测试。
 
 核心规则见[架构设计](architecture.md)：修复进入实际拥有行为和状态的层，Web API 不直接依赖 Page 控制器；缓存明确所属实例、失效和释放条件，不建立进程全局的页面可变状态。
+
+## 源码构建
+
+### Windows 本地构建
+
+本机构建发行包时，先按 [pyv8 文档](../../pyv8/README.md)准备 V8，然后在仓库根目录使用 CPython 3.12：
+
+```powershell
+py -3.12 -m pip install build wheel
+py -3.12 -m build --wheel --outdir dist .
+```
+
+生成的 `pyv8c-*-cp312-abi3-win_amd64.whl` 是单包发行物。
+
+### Linux 本地构建
+
+Ubuntu 22.04 x86-64 可以在 Linux 本机准备 V8 并构建 wheel，使用启用 GIL 的
+CPython 3.12、C++20 编译器和 Python 构建工具：
+
+```bash
+python3.12 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip setuptools wheel build
+python setup.py build_v8
+python -m build --wheel --no-isolation
+python -m pip install dist/pyv8c-*-linux_x86_64.whl
+```
+
+如需代理，可向 `build_v8` 传入 `--proxy=http://主机:端口`。首次构建会下载
+V8 和 Chromium 工具链并耗费较长时间及磁盘空间；可通过 `PYV8_V8_JOBS` 控制并行度。
+上述 Linux wheel 已在 Ubuntu 22.04 x86-64 验证基本运行，不代表兼容所有 Linux 发行版。
+
+### Windows、Linux 和 macOS CI
+
+仓库的 GitHub Actions 工作流 `Build wheels` 可手动选择并并行构建三个平台的 wheel。
+Windows 和 macOS arm64 使用 GitHub 托管 runner；Linux 使用带 `pyv8c-v8` 标签的自托管 x64 Ubuntu
+runner。先在仓库 **Settings → Actions → Runners → New self-hosted runner** 中选择
+Linux x64，在虚拟机上按 GitHub 页面提供的命令下载并注册 runner；配置时添加自定义
+标签 `pyv8c-v8`，并让 runner 以安装了 Python 3.12 的用户运行。注册令牌由 GitHub
+页面临时生成，不要提交到仓库。启动 runner 后，在 **Actions → Build wheels → Run workflow**
+勾选需要的平台并手动运行。对应产物为 `windows-wheels`、`linux-wheels` 和
+`macos-arm64-wheels`；Ubuntu 未运行时，可取消勾选 Linux。
+
+Linux 构建会把 V8 放在运行用户的 `~/.cache/pyv8c-ci/v8` 下供后续任务复用；首次
+构建需要足够的磁盘空间和较长时间。若虚拟机访问 V8 需要代理，应在启动 runner
+进程前配置 `http_proxy` 和 `https_proxy`；如果使用系统服务，也需为该服务配置代理。
+各平台任务检查安装后冒烟与原生崩溃冒烟；Linux 和 macOS 另检查原生参数桥接，Windows wheel 测试矩阵另跑架构层门禁。这些都不代表浏览器完整测试全部通过。
+自托管 runner 会执行工作流代码，应仅用于受信任的工作流和代码来源。
 
 ## 实现接口
 
@@ -37,8 +87,11 @@ python -m pytest -q
 # 只运行浏览器框架测试
 python -m pytest -c pytest.ini pyv8c/tests -q
 
-# 不运行 Chrome 对照的常规主套件
-python -m pytest -c pytest.ini pyv8c/tests/unit pyv8c/tests/integration pyv8c/tests/browser -q
+# 不运行 Chrome 对照的常规主套件（含原生崩溃冒烟）
+python -m pytest -c pytest.ini pyv8c/tests/unit pyv8c/tests/integration pyv8c/tests/browser pyv8c/tests/native -q
+
+# 只跑原生崩溃冒烟（独立子进程）
+python -m pytest -c pytest.ini pyv8c/tests/native -q
 
 # 慢速生命周期、堆预算及策略复查
 python -m pytest -c pytest.ini pyv8c/tests -o addopts=--strict-markers -m slow -q
@@ -61,6 +114,30 @@ python pyv8/tools/check_layout.py
 ```
 
 构建需要该仓库要求的 V8 SDK、编译器和相关设置。不要在其他进程仍加载目标二进制时覆盖它，也不要清理非本次创建的进程。
+
+## 测试分层与归位规则
+
+`pyv8c/tests/` 下五个目录不是按功能模块划分，而是按「跑起来需要什么」和「断言的判据由谁给」分层。这套划分被 `tox.ini`、`pytest.ini` 和 `tools/check_policy.py` 直接引用，新增测试放错层会破坏门禁。
+
+| 目录 | 判据来源 | 运行环境 | 典型内容 |
+| --- | --- | --- | --- |
+| `unit` | 纯 Python 断言 | 必须能在没有已编译扩展时导入 | 架构静态检查、IDL/元数据、参数转换、CookieJar、工具脚本 |
+| `browser` | 单个 Web API 在 pyv8c 里的返回值 | 离线（`default_loader` 返回空 200），不用 Playwright | DOM/BOM 接口、事件、存储 |
+| `integration` | 多个子系统接起来是否还成立 | 本地 HTTP/WebSocket server、Worker、定时器、线程拆除 | 导航、资源、执行预算 |
+| `native` | 子进程是否活着 | 独立进程 + `-X faulthandler` | `test_native_smoke.py`；C++ 段错误会直接杀死 pytest 进程，只能在进程外断言退出码 |
+| `repros` | 真实 Chrome 与 pyv8c 是否一致 | 本机 Chrome + Playwright（`reference` extra） | `corpus.py` 的行为语料，同一 case 两侧各跑一次 |
+
+归位规则：不碰 V8 → `unit`；单个页面行为 → `browser`；跨组件或真实 I/O → `integration`；担心 C++ 崩溃 → `native`；要跟 Chrome 对答案 → `repros`。
+
+三条硬约束：
+
+- `tox.ini` 的 py312~py315 wheel 矩阵只跑 `pyv8/tests` + `tests/unit` + `tests/browser` + `tests/integration`，刻意排除 `native` 和 `repros`：矩阵验证的是同一份 abi3 wheel 在四个 CPython 版本上的行为，不能依赖本机 Chrome，也不必把子进程冒烟重复四次。
+- `tools/check_policy.py` 的 `offline` 门设置 `PYV8C_OFFLINE=1`，由 `tests/conftest.py` 屏蔽 `pyv8c.pyv8` 后只跑 `tests/unit`。因此 **unit 中任何顶层导入会连带加载原生扩展的测试文件，都必须在所有 `pyv8c` 导入之前写一行 `pytest.importorskip("pyv8c.pyv8")`**。该门先做静态预检：按包内 import 图的传递闭包算出「原生绑定模块」（含独立的 `pyv8c._audio_native`），报出违规的文件与行号。`@pytest.mark.native` 只表示「此用例需要已编译扩展」，不能替代这行守卫，因为收集阶段就已经失败了。干净的 CI checkout 同样要设 `PYV8C_OFFLINE=1`，否则 `pytest.importorskip` 会把 `cannot import name '_pyv8'` 重新抛出，而不是跳过。
+- `pytest.ini` 注册 `native` / `race` / `slow` 三个 marker 并默认 `-m "not slow"`。**`@pytest.mark.native` 与 `native/` 目录不是一回事**：前者是「需要扩展」的标记，`unit` 里也有；后者表示必须在独立子进程里验证不崩溃。
+
+`repros` 是双引擎行为语料，不是普通回归测试：本机 Chrome 版本、IDL 基线（`154.0.8030.0`）与 `chrome-environment.json` 的环境档案（`156.0.8078.80`）互不相同，版本一漂移就会整批报错。默认 `pytest -q` 也会收集它，上面「不运行 Chrome 对照的常规主套件」是日常改动更合适的判据；不要用改 `expected` 的方式把漂移修绿。
+
+`native/` 已接进 `Build wheels` 工作流：Windows wheel 测试矩阵、Linux 与 macOS 构建任务在安装 wheel 后各跑一次原生崩溃冒烟，Windows 矩阵另在 Python 3.12 上跑 `layers` 架构门；源码树里没有编译扩展时，冒烟测试自动从已安装的 wheel 加载，本地有扩展时仍按原来的源码路径运行。`layers` 门会启动子进程真实导入 Web 模块，`startup` 门要构造 Browser，二者都需要编译扩展，因此留在 wheel 任务与本地 pre-commit；`.github/workflows/source-checks.yml` 的 PR 门禁只跑 `check_license.py`、三个纯源码策略门和离线 `tests/unit`。
 
 ## Chrome 行为对照
 

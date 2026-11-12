@@ -1,5 +1,7 @@
 # DevTools 架构与迁移
 
+**简体中文** | [English](../en/pyv8/devtools.md)
+
 ## 公开接口
 
 ```python

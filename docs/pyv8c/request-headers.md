@@ -1,5 +1,7 @@
 # 请求头
 
+**简体中文** | [English](../en/pyv8c/request-headers.md)
+
 [文档索引](../README.md)
 
 ## 生成入口

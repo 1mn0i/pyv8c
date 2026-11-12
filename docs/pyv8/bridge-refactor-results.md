@@ -1,73 +1,79 @@
-# Bridge refactor results
+# 桥接重构结果
 
-## Scope and status
+**简体中文** | [English](../en/pyv8/bridge-refactor-results.md)
 
-Implemented the native lifecycle/resource refactor, CPython 3.12 Stable ABI,
-vectorcall callbacks and accessors, default JS handles, explicit materialization,
-passive trace fixes, and the corresponding pyv8c evaluation boundary changes.
-Windows correctness, performance, memory and wheel checks passed locally.
-Linux builds and Linux ASan/UBSan runs are **not verified** in this environment;
-the complete cross-platform acceptance remains outstanding.
+## 范围与状态
 
-This historical measurement used V8 15.2.20.1; the current default is recorded in
-`pyv8/V8_VERSION`. No compatibility layer for
-`preserve_arguments` or `_to_python` was retained. See [bridge-kernel.md](bridge-kernel.md)
-for interfaces, ownership, close semantics and reproduction commands.
+已实现原生生命周期/资源重构、CPython 3.12 Stable ABI、
+vectorcall 回调与访问器、默认 JS 句柄、显式物化、
+被动跟踪修复，以及相应的 pyv8c 求值边界变更。
+Windows 上的正确性、性能、内存和 wheel 检查均在本地通过。
+Linux 构建及 Linux ASan/UBSan 运行在本环境中**未经验证**；
+完整的跨平台验收仍有待完成。
 
-## Build identity
+本次历史测量使用 V8 15.2.20.1；当前默认值记录在
+`pyv8/V8_VERSION`。未保留针对
+`preserve_arguments` 或 `_to_python` 的兼容层。参见 [bridge-kernel.md](bridge-kernel.md)
+了解接口、所有权、关闭语义与复现命令。
 
-- Date: 2026-09-18, Windows x64, MSVC 14.44, release `/O2 /GL /MT`.
-- Baseline source: `pyv8` commit `45a19de56d12108dbe24b08ffa60359aecbabd1e`, from before the
-  native binding and the browser framework were merged into one repository; that merge rewrote
-  the history, so the hash no longer resolves.
-- Baseline source/binary snapshots: `build/bridge-baseline-source.zip`,
-  `build/bridge-baseline-pyv8c.zip`, `build/bridge-baseline.pyd`.
-- Baseline binary SHA-256: `5d882a4adcb613abcddf87852c7292473bb1e3cd4177b66c30123fff1695339f`.
-- Tested in-place binary SHA-256: `1d6e163081108337dad76f51f4f159ba7a39e4cb1d537305a3fd1b05fe5990bd`.
-- Changes remain in the working trees. The revision field in the benchmark JSON
-  identifies the parent commit; it does not imply the refactor was committed.
-- Wheel: `dist/bridge/pyv8-2.1.2-cp312-abi3-win_amd64.whl`.
-  Its clean build uses a separate output directory. Its metadata has the
-  `cp312-abi3-win_amd64` tag; its only extension binary is `pyv8/_pyv8.pyd`.
-  The repository's preexisting Linux `.so` was not rebuilt or distributed in it.
+## 构建标识
 
-## Correctness
+- 日期：2026-09-18，Windows x64，MSVC 14.44，release `/O2 /GL /MT`。
+- 基线来源：`pyv8` 的提交 `45a19de56d12108dbe24b08ffa60359aecbabd1e`，取自原生绑定
+  与浏览器框架合并进同一仓库之前；那次合并重写了历史，
+  因此该哈希不再可解析。
+- 基线源码/二进制快照：`build/bridge-baseline-source.zip`、
+  `build/bridge-baseline-pyv8c.zip`、`build/bridge-baseline.pyd`。
+- 基线二进制 SHA-256：`5d882a4adcb613abcddf87852c7292473bb1e3cd4177b66c30123fff1695339f`。
+- 已测试的就地产物 SHA-256：`1d6e163081108337dad76f51f4f159ba7a39e4cb1d537305a3fd1b05fe5990bd`。
+- 改动仍留在工作区中。基准 JSON 中的版本字段
+  标识的是父提交；并不表示重构已提交。
+- wheel：`dist/bridge/pyv8-2.1.2-cp312-abi3-win_amd64.whl`。
+  这是旧双包布局的历史产物，记录于
+  2026-10-14；当前发行包是从仓库根构建的
+  单一 `pyv8c` wheel。
+  其干净构建使用单独的输出目录。其元数据带有
+  `cp312-abi3-win_amd64` 标签；唯一的扩展二进制原为 `pyv8/_pyv8.pyd`
+  （现为 `pyv8c/pyv8c/pyv8/_pyv8.pyd`）。
+  仓库中原有的 Linux `.so` 未在其中重新构建或随其分发。
 
-All tests from both projects were collected together, with the same in-place
-binary and local Python sources on `PYTHONPATH`:
+## 正确性
 
-| Interpreter | Result | Duration |
+两个项目的全部测试集中收集，使用相同的就地产物，
+并将本地 Python 源码置于 `PYTHONPATH`：
+
+| 解释器 | 结果 | 耗时 |
 | --- | --- | --- |
-| CPython 3.12.9 | 916 passed, 35 subtests passed | 100.08 s |
-| CPython 3.13.3 | 916 passed | 64.22 s |
-| CPython 3.14.6 | 916 passed, 35 subtests passed | 65.57 s |
+| CPython 3.12.9 | 916 通过，35 个子测试通过 | 100.08 s |
+| CPython 3.13.3 | 916 通过 | 64.22 s |
+| CPython 3.14.6 | 916 通过，35 个子测试通过 | 65.57 s |
 
-The 3.13 pytest installation does not report subtests separately. Each combined
-run emitted two unknown-marker warnings because the native repository's pytest
-configuration does not register pyv8c's `race` and `native` markers. No tests failed.
-Native-only verification also passed: 332 tests and 35 subtests; pyv8c contributes
-584 tests. Logs are in `build/bridge-python*-tests.log`.
+3.13 的 pytest 安装不单独报告子测试。每次合并运行都会
+产生两条未知标记警告，因为原生仓库的 pytest 配置
+未注册 pyv8c 的 `race` 和 `native` 标记。没有测试失败。
+仅原生的验证也通过：332 个测试和 35 个子测试；pyv8c 贡献
+584 个测试。日志位于 `build/bridge-python*-tests.log`。
 
-Coverage includes both formerly failing passive trace cases, cyclic collection,
-cross-context retention and invalidation, callback reentrant close, close races,
-worker and inspector shutdown, origin checks, isolated error hooks and subprocess
-shutdown without `--expose-gc`. New tests cover default handles, object identity
-roundtrips without Proxy observation, explicit cyclic materialization, vectorcall
-stack/heap argument boundaries and exception-state lifetime.
+覆盖包括此前失败的两个被动跟踪用例、循环回收、
+跨 Context 保留与失效、回调可重入关闭、关闭竞态、
+Worker / Inspector 关闭、来源检查、隔离的错误钩子以及
+不带 `--expose-gc` 的子进程关闭。新增测试覆盖默认句柄、
+无 Proxy 观察的对象标识往返、显式循环物化、
+vectorcall 栈/堆参数边界与异常状态生命周期。
 
-The extracted wheel was additionally loaded from `build/wheel-validation` on
-all three interpreters, exercising native materialization and pyv8c page creation,
-evaluation and close. These are wheel smoke checks, not a second full suite.
+解包后的 wheel 还从 `build/wheel-validation` 在
+全部三个解释器上加载，执行原生物化以及 pyv8c 页面的创建、
+求值与关闭。这些是 wheel 冒烟检查，而非第二套完整测试。
 
-## Performance
+## 性能
 
-`benchmarks/bridge.py` used five independent processes per version. Each workload
-had five warmup batches and twenty measured batches per process. Results below
-are medians of process medians, in milliseconds per batch. Both runs used
-CPython 3.12.9 and the same machine, V8 and release compiler settings. The final
-benchmark ran after builds and tests finished.
+`benchmarks/bridge.py` 每个版本使用五个独立进程。每个工作负载
+每进程包含五个预热批次和二十个测量批次。以下结果为
+各进程中位数的中位数，单位为每批次毫秒。两次运行均使用
+CPython 3.12.9，以及同一台机器、同一 V8 与 release 编译器设置。
+最终基准在构建和测试完成后运行。
 
-| Workload | Before ms | After ms | Time reduction |
+| 工作负载 | 改造前(ms) | 改造后(ms) | 耗时下降 |
 | --- | ---: | ---: | ---: |
 | Callback, 0 arguments | 1.584 | 0.822 | 48.1% |
 | Callback, 1 argument | 2.060 | 0.910 | 55.8% |
@@ -82,43 +88,42 @@ benchmark ran after builds and tests finished.
 | Local DOM | 3.113 | 2.912 | 6.5% |
 | Page create/close | 4.915 | 4.912 | 0.1% |
 
-The first nine host workloads have a geometric mean time ratio of **0.4453**,
-or **55.5% less elapsed time**, exceeding the 15% target. No individual measured
-workload regressed by more than 5%. Page lifecycle is effectively unchanged.
-These results describe these fixed workloads, not every application. The exception
-case includes the existing error reporting overhead; it is not a pure throw benchmark.
-Trace and DOM batches have 500 operations; other native batches have 2,000.
-Page lifecycle batches each create and close one page.
+前九个宿主工作负载的几何平均耗时比为 **0.4453**，
+即 **耗时减少 55.5%**，超过 15% 的目标。没有任何
+单个被测工作负载出现超过 5% 的回归。页面生命周期基本不变。
+这些结果描述的是这些固定工作负载，而非所有应用。异常
+用例包含现有的错误报告开销；它并非纯粹的抛出基准。
+跟踪与 DOM 批次各有 500 次操作；其他原生批次有 2,000 次。
+页面生命周期批次每个创建并关闭一个页面。
 
-Raw samples: [before.json](../../benchmarks/results/before.json),
-[after.json](../../benchmarks/results/after.json). These are historical measurements.
+原始样本为 `benchmarks/results/before.json` 与
+`benchmarks/results/after.json`。这些是历史测量，随测量环境生成，未随仓库分发。
 
-## Memory
+## 内存
 
-The independent `benchmarks/lifecycle.py` process warmed up with 20 pages, then
-created and closed 1,000 pages with normal chrome installation. Every 100 rounds
-it ran V8 LowMemoryNotification and Python GC three times. **Page, Window and
-native Context live counts were zero at all ten checkpoints.** Page/Window use
-weakrefs; native Context uses its GC-tracked identity because it has no weakrefs.
-Observation references are cleared each batch to avoid their accumulating cost.
+独立的 `benchmarks/lifecycle.py` 进程以 20 个页面预热，随后
+在常规 chrome 安装下创建并关闭 1,000 个页面。每 100 轮
+运行三次 V8 LowMemoryNotification 与 Python GC。**Page、Window 及
+原生 Context 的存活计数在全部十个检查点均为零。** Page/Window 使用
+弱引用；原生 Context 因其没有弱引用而使用 GC 跟踪的标识。
+每批次都会清除观察引用，以避免其累积开销。
 
-Private memory was 58.4 MiB before measurement, 71.5 MiB at round 100, and
-75.9 MiB at round 1,000. From round 400 onward it ranged from 74.8 to 75.9 MiB,
-without proportional growth with page count. Python traced allocation delta grew
-from 51.1 KiB at round 100 to 88.6 KiB at round 1,000; the final 500 rounds added
-about 7.4 KiB. These figures include the small accumulating report and runtime
-caches. This run demonstrates released page ownership and a flattening private
-memory curve; it does not assert that every byte or RSS returns to its initial value.
+私有内存在测量前为 58.4 MiB，第 100 轮为 71.5 MiB，
+第 1,000 轮为 75.9 MiB。从第 400 轮起，其范围在 74.8 至 75.9 MiB 之间，
+未随页面数量成比例增长。Python 跟踪的分配增量从
+第 100 轮的 51.1 KiB 增至第 1,000 轮的 88.6 KiB；最后 500 轮
+增加约 7.4 KiB。这些数值包含少量累积的报告与运行时
+缓存。此次运行表明页面所有权已释放且私有内存曲线趋平；
+它并不断言每个字节或 RSS 都会回到初始值。
 
-Raw data: [lifecycle-after.json](../../benchmarks/results/lifecycle-after.json).
-The optional `benchmarks/plot_results.py` renders the memory curves with matplotlib.
+原始数据为 `benchmarks/results/lifecycle-after.json`，曲线图为 `lifecycle-after.png`；
+两者都是历史测量，未随仓库分发。
+可选的 `benchmarks/plot_results.py` 使用 matplotlib 绘制内存曲线。
 
-![Memory measurements](../../benchmarks/results/lifecycle-after.png)
+## 待完成的验证
 
-## Remaining validation
-
-No usable Linux execution environment or matching Linux V8 build was available
-locally. `tools/validate_linux.sh` and `PYV8_SANITIZERS=address,undefined` provide
-the bridge sanitizer build/run path, but have not been executed. Fully instrumented
-V8 coverage also requires V8 built with the same sanitizer configuration.
-The same-platform 3.12/3.13/3.14 ABI3 matrix is verified on Windows only.
+本地没有可用的 Linux 执行环境，也没有匹配的 Linux V8 构建。
+`pyv8/tools/validate_linux.sh` 与 `PYV8_SANITIZERS=address,undefined` 提供了
+桥接 sanitizer 的构建/运行路径，但尚未执行。完全插桩的
+V8 覆盖还要求 V8 以相同的 sanitizer 配置构建。
+同平台的 3.12/3.13/3.14 ABI3 矩阵仅在 Windows 上得到验证。

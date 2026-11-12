@@ -1,5 +1,7 @@
 # 运行跟踪
 
+**简体中文** | [English](../en/pyv8c/tracing.md)
+
 [文档索引](../README.md)
 
 ## 启用跟踪

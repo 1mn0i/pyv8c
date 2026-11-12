@@ -1,5 +1,7 @@
 # 实验性 ANGLE WebGL 后端
 
+**简体中文** | [English](../en/pyv8c/angle-prototype.md)
+
 安装可选依赖并显式启用：
 
 ```bash

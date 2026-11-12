@@ -1,5 +1,7 @@
 # pyv8 使用指南
 
+**简体中文** | [English](../en/pyv8/user-guide.md)
+
 本文档对应 pyv8c 0.1.0 中的内置 V8 引擎。ABI3 目标为启用 GIL 的 CPython 3.12 至 3.15、V8 15.4.68；3.15 已在 Windows 进行部分验证。
 
 桥接内核重构后，JS 对象默认返回句柄，需要 list/dict 时显式调用
@@ -121,7 +123,7 @@ python setup.py build_v8 --select
 
 ### 编译 Python 扩展
 
-在 `pyv8/` 项目目录下原地编译，生成 `pyv8/_pyv8.pyd` 或 `pyv8/_pyv8.abi3.so`：
+在仓库根目录原地编译，生成 `pyv8c/pyv8c/pyv8/_pyv8.pyd`（Windows）或 `_pyv8.abi3.so`（Linux）：
 
 ```bash
 python setup.py build_ext --inplace
@@ -136,7 +138,7 @@ python setup.py build_ext --inplace --force
 构建可发布 wheel：
 
 ```bash
-python312 -m build --wheel
+python -m build --wheel --outdir dist .
 ```
 
 使用 Python 3.12 构建可以得到 `cp312-abi3` wheel，供启用 GIL 的 Python 3.12 至 3.15 使用。
@@ -150,7 +152,7 @@ $env:PYV8_V8_VERSION = "15.4.68"
 $env:PYV8_V8_HOME = "D:\v8-workspace\v8"
 $env:PYV8_V8_OUT = "D:\v8-workspace\v8\out\x64.release"
 $env:PYV8_ICU_DATA = "D:\v8-workspace\v8\out\x64.release\icudtl.dat"
-python312 -m build --wheel
+python -m build --wheel --outdir dist .
 ```
 
 Linux/macOS 使用相同变量语义：
@@ -160,7 +162,7 @@ PYV8_V8_VERSION=15.4.68 \
 PYV8_V8_HOME=/opt/v8 \
 PYV8_V8_OUT=/opt/v8/out/x64.release \
 PYV8_ICU_DATA=/opt/v8/out/x64.release/icudtl.dat \
-python312 -m build --wheel
+python -m build --wheel --outdir dist .
 ```
 
 `PYV8_V8_OUT` 中必须存在：
@@ -1395,7 +1397,7 @@ python -c "import struct, sys; print(sys.version); print(struct.calcsize('P') * 
 
 ### `ICU data does not match this _pyv8 build`
 
-当前 `pyv8/icudtl.dat` 与 `_pyv8` 编译时使用的文件不同。不要只复制其中一个文件；
+当前 `pyv8c/pyv8c/pyv8/icudtl.dat` 与 `_pyv8` 编译时使用的文件不同。不要只复制其中一个文件；
 重新构建扩展，或者把同一 wheel 中的 `_pyv8` 和 `icudtl.dat` 一起恢复。
 
 ### `Fatal process out of memory` 或 native crash
