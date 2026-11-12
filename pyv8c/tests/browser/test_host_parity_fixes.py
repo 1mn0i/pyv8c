@@ -72,6 +72,97 @@ def test_computed_style_reports_css_initial_values(shared_page):
     })()""") == ["ltr", "1", "1"]
 
 
+def test_computed_background_color_initial_and_declared(shared_page):
+    assert _values(shared_page, """(() => {
+      const el = document.createElement('div');
+      document.body.appendChild(el);
+      const initial = getComputedStyle(el).backgroundColor;
+      el.style.backgroundColor = 'red';
+      const declared = getComputedStyle(el).getPropertyValue('background-color');
+      el.remove();
+      return JSON.stringify([initial, declared, getComputedStyle(el).backgroundColor]);
+    })()""") == ['rgba(0, 0, 0, 0)', 'rgb(255, 0, 0)', '']
+
+
+def test_computed_defaults_do_not_override_explicit_styles(shared_page):
+    assert _values(shared_page, """(() => {
+      const e = document.createElement('div');
+      document.body.appendChild(e);
+      const s = getComputedStyle(e);
+      const defaults = [s.maxWidth, s.maxHeight, s.zIndex, s.transform];
+      e.style.cssText = 'max-width: 40px; max-height: 30px; z-index: 2; transform: scale(2)';
+      const changed = getComputedStyle(e);
+      return JSON.stringify([defaults, changed.maxWidth, changed.maxHeight, changed.zIndex,
+                             changed.transform !== 'none', e.style.maxWidth]);
+    })()""") == [['none', 'none', 'auto', 'none'], '40px', '30px', '2', True, '40px']
+
+
+def test_computed_additional_defaults_and_explicit_values(shared_page):
+    assert _values(shared_page, """(() => {
+      const e = document.createElement('div'); document.body.appendChild(e);
+      const values = s => [s.clear, s.content, s.boxShadow, s.tableLayout, s.aspectRatio, s.verticalAlign];
+      const initial = values(getComputedStyle(e));
+      e.style.cssText = 'clear: both; table-layout: fixed; vertical-align: top';
+      const s = getComputedStyle(e);
+      return JSON.stringify([initial, s.clear, s.tableLayout, s.verticalAlign]);
+    })()""") == [['none', 'normal', 'none', 'auto', 'auto', 'baseline'],
+                   'both', 'fixed', 'top']
+
+
+def test_computed_box_and_background_defaults_preserve_declarations(shared_page):
+    assert _values(shared_page, """(() => {
+      const e = document.createElement('div'); document.body.appendChild(e);
+      let s = getComputedStyle(e);
+      const before = [s.marginTop, s.paddingLeft, s.backgroundImage, s.backgroundRepeat,
+                      getComputedStyle(document.body).marginTop];
+      e.style.cssText = 'margin: 3px 7px; padding-left: 9px; background-image: url("x.png")';
+      s = getComputedStyle(e);
+      return JSON.stringify([before, s.marginTop, s.marginLeft, s.paddingLeft, s.backgroundImage !== 'none']);
+    })()""") == [['0px', '0px', 'none', 'repeat', '8px'], '3px', '7px', '9px', True]
+
+
+def test_computed_border_defaults_follow_current_color(shared_page):
+    assert _values(shared_page, """(() => {
+      const e = document.createElement('div'); e.style.color = 'red'; document.body.appendChild(e);
+      const s = getComputedStyle(e);
+      return JSON.stringify([s.borderTopStyle, s.borderTopWidth, s.borderTopColor,
+                             s.top, s.float, s.animationDuration, s.flexDirection]);
+    })()""") == ['none', '0px', 'rgb(255, 0, 0)', 'auto', 'none', '0s', 'row']
+
+
+def test_computed_inherited_defaults_and_parent_values(shared_page):
+    assert _values(shared_page, """(() => {
+      const p = document.createElement('div'), e = document.createElement('div');
+      p.appendChild(e); document.body.appendChild(p);
+      const read = () => { const s = getComputedStyle(e); return [s.borderCollapse, s.borderSpacing,
+          s.textTransform, s.cursor, s.textShadow, s.listStyleType]; };
+      const defaults = read();
+      p.style.cssText = 'border-collapse: collapse; border-spacing: 4px; text-transform: uppercase; cursor: pointer; list-style-type: square';
+      return JSON.stringify([defaults, read()]);
+    })()""") == [['separate', '0px', 'none', 'auto', 'none', 'disc'],
+                   ['collapse', '4px', 'uppercase', 'pointer', 'none', 'square']]
+
+
+def test_computed_outline_overflow_and_alignment_defaults(shared_page):
+    assert _values(shared_page, """(() => {
+      const e = document.createElement('div'); e.style.color = 'red'; document.body.appendChild(e);
+      const s = getComputedStyle(e);
+      return JSON.stringify([s.borderRadius, s.overflowX, s.overflowY, s.textDecorationLine,
+        s.outlineWidth, s.outlineStyle, s.outlineColor, s.alignItems, s.justifyContent, s.gap, s.inset]);
+    })()""") == ['0px', 'visible', 'visible', 'none', '3px', 'none', 'rgb(255, 0, 0)',
+                   'normal', 'normal', 'normal', 'auto']
+
+
+def test_computed_min_sizes_follow_parent_layout(shared_page):
+    assert _values(shared_page, """(() => {
+      const p = document.createElement('div'), e = document.createElement('div');
+      p.appendChild(e); document.body.appendChild(p);
+      const read = () => [getComputedStyle(e).minWidth, getComputedStyle(e).minHeight];
+      const block = read(); p.style.display = 'flex'; const flex = read();
+      e.style.minWidth = '10px'; return JSON.stringify([block, flex, read()]);
+    })()""") == [['0px', '0px'], ['auto', 'auto'], ['10px', 'auto']]
+
+
 def test_dynamics_compressor_params_have_web_audio_nominal_ranges(shared_page):
     assert _values(shared_page, """(() => {
       const ac = new AudioContext();

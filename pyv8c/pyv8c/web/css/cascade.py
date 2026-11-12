@@ -223,6 +223,9 @@ def _cascade(element, rules, cache=None):
                 values[name] = f'rgb({(color >> 16) & 255}, {(color >> 8) & 255}, {color & 255})'
     values["font-size"] = _px_text(_font_size_px(values.get("font-size", "16px"),
                                                  parent_size, _root_font_size(element, cache)))
+    # Chrome exposes the normal word-spacing computed value as zero length.
+    if str(values.get('word-spacing', '')).lower() in ('normal', 'initial'):
+        values['word-spacing'] = '0px'
     # A length that counts on the font is resolved here, where both sizes are known:
     # ``10em`` under ``font-size: 20px`` is 200px, and a property left as "10em" would
     # otherwise be read as 10.  Chrome's computed value is absolute for all of these.
@@ -337,6 +340,10 @@ def computed_style_object(element, *, rendered=True, layout_snapshot):
     document = getattr(element, 'ownerDocument', None)
     boxes, styles = layout_snapshot(document) if document is not None else ({}, {})
     values = dict(styles.get(element) or computed_style(element))
+    # Supply this initial value only in the computed view: inserting longhands
+    # into the cascade itself can mask user-agent and author shorthands.
+    if 'background' not in values:
+        values.setdefault('background-color', 'rgba(0, 0, 0, 0)')
     box = boxes.get(element)
     if values.get('display') == 'inline':
         values.setdefault('width', 'auto')

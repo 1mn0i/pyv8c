@@ -16,6 +16,26 @@ _OBJECT_NAMES = OBJECT_PROTOTYPE_NAMES | {
     "getPropertyValue", "item", "removeProperty", "setProperty",
 }
 
+# Defaults exposed by the computed view. Keep these out of the cascade so
+# they cannot override declarations or affect layout shorthand precedence.
+_COMPUTED_DEFAULTS = {
+    'max-width': 'none', 'max-height': 'none',
+    'z-index': 'auto', 'transform': 'none',
+    'clear': 'none', 'content': 'normal', 'box-shadow': 'none',
+    'table-layout': 'auto', 'aspect-ratio': 'auto', 'vertical-align': 'baseline',
+    'background-image': 'none', 'background-repeat': 'repeat',
+    'background-position': '0% 0%', 'background-size': 'auto',
+    'background-attachment': 'scroll', 'background-clip': 'border-box',
+    'background-origin': 'padding-box',
+    'top': 'auto', 'right': 'auto', 'bottom': 'auto', 'left': 'auto',
+    'float': 'none', 'transition-duration': '0s', 'animation-duration': '0s',
+    'flex-direction': 'row',
+    'border-radius': '0px', 'overflow-x': 'visible', 'overflow-y': 'visible',
+    'text-decoration-line': 'none', 'outline-width': '3px', 'outline-style': 'none',
+    'align-items': 'normal', 'justify-content': 'normal', 'gap': 'normal', 'inset': 'auto',
+    **{f'{kind}-{side}': '0px' for kind in ('margin', 'padding') for side in _BOX_SIDES},
+}
+
 @interface("CSSStyleDeclaration", None)
 class CSSStyleDeclaration:
     #: Indexed handlers describe host data; iteration exposure belongs to the IDL baseline.
@@ -120,6 +140,49 @@ class CSSStyleDeclaration:
                 parts = _box_values(value) if value is not None else None
                 if parts is not None:
                     return parts[_BOX_SIDES.index(name[len(shorthand)+1:])]
+        if self._computed_values:
+            if name in ('min-width', 'min-height'):
+                parent = getattr(self._element, 'parentElement', None)
+                if parent is not None:
+                    from .cascade import computed_style
+                    if computed_style(parent).get('display') in ('flex', 'inline-flex', 'grid', 'inline-grid'):
+                        return 'auto'
+                return '0px'
+            if name.startswith('background-') and 'background' in self._computed_values:
+                return ''
+            if name in ('top', 'right', 'bottom', 'left') and 'inset' in self._computed_values:
+                return ''
+            if name == 'transition-duration' and 'transition' in self._computed_values:
+                return ''
+            if name == 'animation-duration' and 'animation' in self._computed_values:
+                return ''
+            if name == 'flex-direction' and 'flex-flow' in self._computed_values:
+                return ''
+            blocked_by = {
+                'border-radius': ('border-top-left-radius', 'border-top-right-radius',
+                                  'border-bottom-left-radius', 'border-bottom-right-radius'),
+                'overflow-x': ('overflow',), 'overflow-y': ('overflow',),
+                'text-decoration-line': ('text-decoration',),
+                'outline-width': ('outline',), 'outline-style': ('outline',),
+                'align-items': ('place-items',), 'justify-content': ('place-content',),
+                'gap': ('row-gap', 'column-gap'),
+                'inset': ('top', 'right', 'bottom', 'left'),
+            }
+            if any(key in self._computed_values for key in blocked_by.get(name, ())):
+                return ''
+            if name == 'outline-color' and not any(key.startswith('outline') for key in self._computed_values):
+                return self._value('color')
+            if name.startswith('border-') and not any(
+                    key in ('border', 'border-width', 'border-style', 'border-color')
+                    or any(key == f'border-{side}' or key.startswith(f'border-{side}-')
+                           for side in _BOX_SIDES) for key in self._computed_values):
+                if name.endswith('-style'):
+                    return 'none'
+                if name.endswith('-width'):
+                    return '0px'
+                if name.endswith('-color'):
+                    return self._value('color')
+            return _COMPUTED_DEFAULTS.get(name, "")
         return ""
     def get_cssText(self):
         return _serialize_declarations(self._declarations())

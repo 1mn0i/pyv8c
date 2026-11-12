@@ -174,6 +174,8 @@ INHERITED_PROPERTIES = frozenset((
     "color", "font-family", "font-size", "font-style", "font-weight",
     "line-height", "letter-spacing", "word-spacing", "visibility", "white-space",
     "word-break", "overflow-wrap", "text-align",
+    "border-collapse", "border-spacing", "text-transform", "cursor",
+    "text-shadow", "list-style-type",
 ))
 
 
@@ -189,6 +191,9 @@ INITIAL_VALUES = {
     # author declaration exists.  Without them the cascade answers "" (phase 9
     # parity: direction ltr, opacity 1, zoom 1).
     "direction": "ltr", "opacity": "1", "zoom": "1",
+    "border-collapse": "separate", "border-spacing": "0px",
+    "text-transform": "none", "cursor": "auto", "text-shadow": "none",
+    "list-style-type": "disc",
 }
 
 
