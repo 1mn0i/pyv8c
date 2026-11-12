@@ -97,6 +97,9 @@ class PerformanceTiming:
         self._services = services or _realm
         self._clock = clock_of(self._services)
 
+    def fn_toJSON(self, *_extra):
+        return {field: getattr(self, 'get_' + field)() for field in _TIMING_FIELDS}
+
 
 def timeline_of(services):
     """The realm's timeline, or ``None`` when these services own no realm."""
@@ -149,6 +152,9 @@ class PerformanceNavigation:
     def get_redirectCount(self):
         record = navigation_record(self._services)
         return int(record.get("redirectCount", 0)) if record is not None else 0
+
+    def fn_toJSON(self, *_extra):
+        return {'type': self.get_type(), 'redirectCount': self.get_redirectCount()}
 
 
 @interface('MemoryInfo', None)
