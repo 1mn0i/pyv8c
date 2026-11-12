@@ -3,14 +3,18 @@
 import math
 import re
 
+from pyv8c import pyv8
+
 from ....idl import interface
-from ....foundation.arguments import MISSING, IdlArgumentError, dom_string, is_nullish, missing_error, number, sequence
+from ....foundation.arguments import (MISSING, IdlArgumentError, boolean, dom_string,
+                                      is_nullish, missing_error, number, sequence)
 from ...page_errors import IndexSizeError, PageTypeError
 from .bitmap import ImageData, bitmap_source_image, signature_error
 from .colors import canvas_color, number_text, parse_color, serialize_color
 from .contexts import enum_error
 from .gradient import CanvasGradient
 from .text import TextMetrics
+from ..path import Path as _CanvasPath
 
 
 _TEXT_BASELINES = frozenset(("alphabetic", "bottom", "hanging", "ideographic", "middle", "top"))
@@ -103,21 +107,6 @@ def _is_canvas_image_source(value):
                                     "VideoFrame")
 
 
-def _quadratic(start, control, end, steps=24):
-    """A quadratic Bézier sampled into points, the start point excluded."""
-    return [((1 - t) ** 2 * start[0] + 2 * (1 - t) * t * control[0] + t * t * end[0],
-             (1 - t) ** 2 * start[1] + 2 * (1 - t) * t * control[1] + t * t * end[1])
-            for t in (index / steps for index in range(1, steps + 1))]
-
-
-def _cubic(start, first, second, end, steps=24):
-    """A cubic Bézier sampled into points, the start point excluded."""
-    return [((1 - t) ** 3 * start[0] + 3 * (1 - t) ** 2 * t * first[0]
-             + 3 * (1 - t) * t * t * second[0] + t ** 3 * end[0],
-             (1 - t) ** 3 * start[1] + 3 * (1 - t) ** 2 * t * first[1]
-             + 3 * (1 - t) * t * t * second[1] + t ** 3 * end[1])
-            for t in (index / steps for index in range(1, steps + 1))]
-
 
 @interface('CanvasRenderingContext2D', None)
 class CanvasRenderingContext2D:
@@ -140,7 +129,7 @@ class CanvasRenderingContext2D:
         self._line_dash = []
         #: The faces this context has already opened for drawing, by file, face and size.
         self._font_handles = {}
-        self._path = []; self._stack = []
+        self._path = _CanvasPath(); self._stack = []
         self._composite = "source-over"; self._filter = "none"
         self._transform = _IDENTITY
         self._shadow = "rgba(0, 0, 0, 0)"
@@ -386,7 +375,7 @@ class CanvasRenderingContext2D:
         """Fill every subpath with the current fillStyle.  Windings are not distinguished."""
         def polygons(draw):
             for subpath in self._path:
-                points = [self._device(x, y) for x, y in subpath]
+                points = subpath
                 if len(points) >= 3:
                     draw.polygon(points, fill=255)
         self._paint(self._fill, polygons)
@@ -429,73 +418,90 @@ class CanvasRenderingContext2D:
         if self._draw:
             self._draw_text(str(text), x, y, fill=None, stroke=canvas_color(self._stroke))
     def fn_rect(self, x=MISSING, y=MISSING, width=MISSING, height=MISSING, *_extra):
-        for index, value in enumerate((x, y, width, height)):
-            if value is MISSING:
-                raise missing_error(type(self).__name__, 'rect', 4, index, constructor=False)
-        x, y, width, height = (float(number(value)) for value in (x, y, width, height))
+        x, y, width, height = self._path_numbers('rect', (x, y, width, height))
         if not all(math.isfinite(value) for value in (x, y, width, height)):
             return
-        self._path.append([(x,y), (x+width,y), (x+width,y+height), (x,y+height), (x,y)])
+        self._path.move_to(self._device(x, y))
+        for px, py in ((x+width,y), (x+width,y+height), (x,y+height)):
+            self._path.line_to(self._device(px, py))
+        self._path.close()
 
-    def fn_beginPath(self, *_): self._path = []
-    def fn_moveTo(self, x=0, y=0, *_):
-        if math.isfinite(float(x)) and math.isfinite(float(y)):
-            self._path.append([(float(x), float(y))])
-    def fn_lineTo(self, x=0, y=0, *_):
-        if not math.isfinite(float(x)) or not math.isfinite(float(y)): return
-        if not self._path: self.fn_moveTo(x, y)
-        else: self._path[-1].append((float(x), float(y)))
-    def fn_arc(self, x=0, y=0, r=0, start=0, end=0, anticlockwise=False, *_):
-        n = max(8, int(abs(float(end) - float(start)) * 24))
-        pts = [
-            (float(x) + float(r) * math.cos(float(start) + (float(end) - float(start)) * i / n),
-             float(y) + float(r) * math.sin(float(start) + (float(end) - float(start)) * i / n))
-            for i in range(n + 1)
-        ]
-        self._path.append(pts)
+    def fn_beginPath(self, *_): self._path = _CanvasPath()
+    def _path_numbers(self, method, values):
+        for index, value in enumerate(values):
+            if value is MISSING:
+                raise missing_error(type(self).__name__, method, len(values), index,
+                                    constructor=False)
+        return tuple(float(number(value)) for value in values)
+
+    def fn_moveTo(self, x=MISSING, y=MISSING, *_):
+        x, y = self._path_numbers('moveTo', (x, y))
+        if math.isfinite(x) and math.isfinite(y):
+            self._path.move_to(self._device(x, y))
+    def fn_lineTo(self, x=MISSING, y=MISSING, *_):
+        x, y = self._path_numbers('lineTo', (x, y))
+        if not math.isfinite(x) or not math.isfinite(y): return
+        self._path.line_to(self._device(x, y))
+    def fn_arc(self, x=MISSING, y=MISSING, r=MISSING, start=MISSING, end=MISSING,
+               anticlockwise=False, *_):
+        x, y, r, start, end = self._path_numbers('arc', (x, y, r, start, end))
+        if not all(math.isfinite(value) for value in (x, y, r, start, end)):
+            return
+        if r < 0:
+            raise IndexSizeError(
+                f"Failed to execute 'arc' on '{type(self).__name__}':"
+                f" The radius provided ({number_text(r)}) is negative.")
+        self.fn_ellipse(x, y, r, r, 0, start, end, anticlockwise)
     def fn_closePath(self, *_):
         """Close the last subpath; nothing at all when the path is empty."""
-        if not self._path: return
-        points = self._path[-1]
-        if points and points[0] != points[-1]: points.append(points[0])
-    def fn_bezierCurveTo(self, cp1x=0, cp1y=0, cp2x=0, cp2y=0, x=0, y=0, *_):
-        values = (cp1x, cp1y, cp2x, cp2y, x, y)
-        if not all(math.isfinite(float(value)) for value in values): return
-        cp1x, cp1y, cp2x, cp2y, x, y = (float(value) for value in values)
-        if not self._path: self.fn_moveTo(cp1x, cp1y)
-        self._path[-1].extend(_cubic(self._path[-1][-1], (cp1x, cp1y), (cp2x, cp2y), (x, y)))
-    def fn_quadraticCurveTo(self, cpx=0, cpy=0, x=0, y=0, *_):
-        values = (cpx, cpy, x, y)
-        if not all(math.isfinite(float(value)) for value in values): return
-        cpx, cpy, x, y = (float(value) for value in values)
-        if not self._path: self.fn_moveTo(cpx, cpy)
-        self._path[-1].extend(_quadratic(self._path[-1][-1], (cpx, cpy), (x, y)))
-    def fn_ellipse(self, x=0, y=0, rx=0, ry=0, rotation=0, start=0, end=0,
+        self._path.close()
+    def fn_bezierCurveTo(self, cp1x=MISSING, cp1y=MISSING, cp2x=MISSING,
+                         cp2y=MISSING, x=MISSING, y=MISSING, *_):
+        self._curve_to('bezierCurveTo', (cp1x, cp1y, cp2x, cp2y, x, y))
+    def fn_quadraticCurveTo(self, cpx=MISSING, cpy=MISSING, x=MISSING, y=MISSING, *_):
+        self._curve_to('quadraticCurveTo', (cpx, cpy, x, y))
+    def _curve_to(self, method, values):
+        values = self._path_numbers(method, values)
+        if all(math.isfinite(value) for value in values):
+            self._path.curve_to(*(self._device(*values[i:i+2]) for i in range(0, len(values), 2)))
+    def fn_ellipse(self, x=MISSING, y=MISSING, rx=MISSING, ry=MISSING,
+                   rotation=MISSING, start=MISSING, end=MISSING,
                    anticlockwise=False, *_):
         """An ellipse arc; non-finite values are ignored, a negative radius is refused."""
-        from ...page_errors import IndexSizeError
-        values = (x, y, rx, ry, rotation, start, end)
-        if not all(math.isfinite(float(value)) for value in values): return
-        x, y, rx, ry, rotation, start, end = (float(value) for value in values)
+        values = self._path_numbers('ellipse', (x, y, rx, ry, rotation, start, end))
+        if not all(math.isfinite(value) for value in values): return
+        x, y, rx, ry, rotation, start, end = values
+        anticlockwise = boolean(anticlockwise)
         for radius, axis in ((rx, "major"), (ry, "minor")):
             if radius < 0:
                 raise IndexSizeError(
                     f"Failed to execute 'ellipse' on '{type(self).__name__}':"
                     f" The {axis}-axis radius provided ({number_text(radius)}) is negative.")
         sweep = end - start
-        if anticlockwise:
-            while sweep > 0: sweep -= 2 * math.pi
-        else:
-            while sweep < 0: sweep += 2 * math.pi
-
-        def point(angle):
-            cosine, sine = math.cos(angle), math.sin(angle)
-            return (x + rx * cosine * math.cos(rotation) - ry * sine * math.sin(rotation),
-                    y + rx * cosine * math.sin(rotation) + ry * sine * math.cos(rotation))
-
-        if not self._path: self.fn_moveTo(*point(start))
-        steps = max(8, int(abs(sweep) * 24))
-        self._path[-1].extend(point(start + sweep * index / steps) for index in range(1, steps + 1))
+        if abs(sweep) >= math.tau:
+            sweep = -math.tau if anticlockwise else math.tau
+        elif anticlockwise and sweep > 0:
+            sweep -= math.tau
+        elif not anticlockwise and sweep < 0:
+            sweep += math.tau
+        center = self._device(x, y)
+        a, b, c, d, _e, _f = self._transform
+        if a*d - b*c == 0:
+            return
+        cosine, sine = math.cos(rotation), math.sin(rotation)
+        u = (rx*(a*cosine + c*sine), rx*(b*cosine + d*sine))
+        v = (ry*(-a*sine + c*cosine), ry*(-b*sine + d*cosine))
+        self._path.ellipse(center, u, v, start % math.tau, sweep)
+    def fn_isPointInPath(self, x=MISSING, y=MISSING, fillRule="nonzero", *_extra):
+        """Test the current path in canvas coordinates, including implicit closes."""
+        interface = type(self).__name__
+        x, y = self._path_numbers('isPointInPath', (x, y))
+        rule = "nonzero" if fillRule is pyv8.Undefined else str(dom_string(fillRule))
+        if rule not in ("nonzero", "evenodd"):
+            raise enum_error(interface, 'isPointInPath', rule, "CanvasFillRule")
+        if not math.isfinite(x) or not math.isfinite(y):
+            return False
+        return self._path.contains(x, y, rule)
     def get_shadowColor(self): return self._shadow
     def set_shadowColor(self, value):
         """A colour the parser refuses is ignored, leaving the state as it was."""
@@ -519,7 +525,7 @@ class CanvasRenderingContext2D:
     def fn_stroke(self, *_):
         if self._draw:
             for subpath in self._path:
-                points = [self._device(x, y) for x, y in subpath]
+                points = subpath
                 if len(points) > 1: self._draw.line(points, fill=canvas_color(self._stroke), width=1)
     def fn_strokeRect(self, x=0, y=0, w=0, h=0, *_):
         if self._draw:

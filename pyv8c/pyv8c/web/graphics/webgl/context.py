@@ -282,6 +282,8 @@ class WebGLRenderingContext:
             return list(self._color_mask)
         if pname in (UNMASKED_VENDOR_WEBGL, UNMASKED_RENDERER_WEBGL):
             return self._unmasked(pname)
+        if pname == 34047 and "EXTTextureFilterAnisotropic" in self._extension_objects:
+            return 16
         for _name, constant, kind, values in ARRAY_PARAMETERS:
             if pname == constant and values is not None:
                 return _typed(kind, values)
