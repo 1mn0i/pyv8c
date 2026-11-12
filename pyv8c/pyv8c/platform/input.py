@@ -307,7 +307,8 @@ class MouseInput:
             x += box.left + box.border.get('left', 0.0) + box.padding.get('left', 0.0)
             y += box.top + box.border.get('top', 0.0) + box.padding.get('top', 0.0)
             page = page.parent_page
-        return x, y
+        viewport = page.window._environment.viewport
+        return x + viewport.screen_x, y + viewport.screen_y
 
     def _emit(self, event_type, target, *, button=0, detail=0, related=None,
               bubbles=True, cancelable=True, event_class=None, propagates=True,
@@ -333,7 +334,7 @@ class MouseInput:
             "bubbles": bubbles, "cancelable": cancelable, "detail": detail,
             "button": button, "buttons": self._bits,
             "clientX": self._x, "clientY": self._y,
-            # The top-level viewport has no native window offset in this host.
+            # Screen coordinates include the configured window position.
             "screenX": screen_x, "screenY": screen_y,
             "movementX": self._movement_x if event_type.endswith("move") else 0,
             "movementY": self._movement_y if event_type.endswith("move") else 0,

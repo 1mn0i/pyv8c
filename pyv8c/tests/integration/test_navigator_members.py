@@ -88,6 +88,70 @@ def test_the_environment_answers_bluetooth_and_the_geolocation_permission():
         browser.close()
 
 
+@pytest.mark.parametrize('configured,expected', [
+    (None, 'prompt'), ('prompt', 'prompt'), ('denied', 'denied'), ('granted', 'granted'),
+])
+def test_geolocation_permission_query_reflects_configured_state(configured, expected):
+    environment = {} if configured is None else {'geolocation.permission': configured}
+    browser = Browser(real_network=False, environment=environment, stub_logging='off')
+    try:
+        page = browser.new_profile().new_page()
+        page.set_content('<body></body>', url='https://secure.test/')
+        assert _settled(page, "navigator.permissions.query({name:'geolocation'}).then(s => s.state)") == [
+            'value', expected]
+    finally:
+        browser.close()
+
+
+def test_empty_permission_profile_does_not_restore_default_grants_or_names():
+    browser = Browser(real_network=False, environment={'permissions.granted': [],
+                      'permissions.spec_names': {}}, stub_logging='off')
+    try:
+        page = browser.new_profile().new_page()
+        page.set_content('<body></body>', url='https://secure.test/')
+        assert _settled(page, "navigator.permissions.query({name:'background-sync'})"
+                        ".then(s => [s.name, s.state])") == ['value', ['background-sync', 'prompt']]
+    finally:
+        browser.close()
+
+    browser = Browser(real_network=False, environment={'permissions.names': []}, stub_logging='off')
+    try:
+        page = browser.new_profile().new_page()
+        page.set_content('<body></body>', url='https://secure.test/')
+        assert _settled(page, "navigator.permissions.query({name:'camera'})")[1] == 'TypeError'
+    finally:
+        browser.close()
+
+
+def test_top_level_storage_permission_validates_requested_origin():
+    browser = Browser(real_network=False, environment={
+        'permissions.names': ['top-level-storage-access'],
+        'permissions.granted': [], 'permissions.spec_names': {},
+    }, stub_logging='off')
+    try:
+        page = browser.new_profile().new_page()
+        page.set_content('<body></body>', url='https://secure.test/')
+        for origin in (None, "'not a URL'", "'https://example.test:99999'"):
+            extra = '' if origin is None else ', requestedOrigin:' + origin
+            result = _settled(page, "navigator.permissions.query({name:'top-level-storage-access'" + extra + "})")
+            assert result == ['error', 'TypeError',
+                              "Failed to execute 'query' on 'Permissions': The requested origin is invalid."]
+        for origin, state in [('https://other.test/path', 'prompt'), ('http://other.test', 'denied'),
+                              ('http://localhost', 'prompt'), ('data:text/plain,a', 'denied'),
+                              ('file:///tmp/a', 'prompt'), ('blob:https://other.test/a', 'prompt')]:
+            import json
+            result = _settled(page, "navigator.permissions.query({name:'top-level-storage-access',requestedOrigin:" +
+                              json.dumps(origin) + "}).then(s => s.state)")
+            assert result == ['value', state]
+        page.evaluate('window.__reads = []')
+        result = _settled(page, "navigator.permissions.query({get name(){__reads.push('name');return 'top-level-storage-access'},"
+                          "get requestedOrigin(){__reads.push('requestedOrigin');return 'https://other.test'}}).then(s => s.state)")
+        assert result == ['value', 'prompt']
+        assert page.evaluate('__reads') == ['name', 'name', 'requestedOrigin']
+    finally:
+        browser.close()
+
+
 def test_permissions_query_validation_rejects_a_promise_like_chrome():
     browser = Browser(real_network=False, stub_logging="off")
     try:

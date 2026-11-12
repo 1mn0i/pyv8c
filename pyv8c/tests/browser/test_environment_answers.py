@@ -50,3 +50,26 @@ def test_the_voices_are_the_collected_ones_and_the_table_without_a_profile():
     assert _voice_entries(_Services()) == (("Test Voice", "en-GB", True, False),)
     assert _voice_entries(None) == _SPEECH_VOICES
     assert _voice_entries(_Services()) != _SPEECH_VOICES, "the machine's voices are not this table"
+
+
+def test_window_screen_position_is_configurable():
+    browser = Browser(environment={'viewport.screen_x': -25, 'viewport.screen_y': 10}, stub_logging='off')
+    try:
+        page = browser.new_profile().new_page()
+        page.set_content(PAGE, url='https://environment.test/')
+        assert page.evaluate('[screenX, screenY, screenLeft, screenTop]') == [-25, 10, -25, 10]
+    finally:
+        browser.close()
+
+
+def test_configured_window_position_offsets_mouse_screen_coordinates():
+    browser = Browser(environment={'viewport.screen_x': -25, 'viewport.screen_y': 10}, stub_logging='off')
+    try:
+        page = browser.new_profile().new_page()
+        page.set_content('<body style="margin:0; width:200px; height:200px"></body>',
+                         url='https://environment.test/')
+        page.evaluate("window.coords=[];addEventListener('mousemove', e => coords.push([e.clientX,e.clientY,e.screenX,e.screenY]))")
+        page.mouse.move(30, 40)
+        assert page.evaluate('coords') == [[30, 40, 5, 50]]
+    finally:
+        browser.close()

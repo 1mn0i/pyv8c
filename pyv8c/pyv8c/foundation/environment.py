@@ -376,13 +376,15 @@ FIELDS: tuple[Field, ...] = (
     #: defaults below are what the shipped profile reported before these keys existed.
     Field("viewport.outer_inset_width", _integer, True, default=16),
     Field("viewport.outer_inset_height", _integer, True, default=95),
+    Field("viewport.screen_x", _integer, True, default=0),
+    Field("viewport.screen_y", _integer, True, default=0),
     Field("screen.width", _integer, True),
     Field("screen.height", _integer, True),
     Field("screen.avail_width", _integer, True),
     Field("screen.avail_height", _integer, True),
     Field("screen.color_depth", _integer, True),
     Field("screen.pixel_depth", _integer, True),
-    Field("geolocation.permission", _enum("denied", "granted"), default="denied"),
+    Field("geolocation.permission", _enum("prompt", "denied", "granted"), default="prompt"),
     Field("geolocation.latitude", _optional_number),
     Field("geolocation.longitude", _optional_number),
     Field("geolocation.accuracy", _optional_number),
@@ -465,6 +467,8 @@ class ViewportView:
     #: The window's own decorations around the viewport, in CSS pixels.
     outer_inset_width: int
     outer_inset_height: int
+    screen_x: int
+    screen_y: int
 
 
 @dataclass(frozen=True)
@@ -737,7 +741,8 @@ class BrowserEnvironment:
             values["viewport.width"], values["viewport.height"],
             values["viewport.device_scale_factor"], values["viewport.mobile"],
             values["viewport.touch"], values["viewport.outer_inset_width"],
-            values["viewport.outer_inset_height"],
+            values["viewport.outer_inset_height"], values["viewport.screen_x"],
+            values["viewport.screen_y"],
         ))
         object.__setattr__(self, "screen", ScreenView(
             values["screen.width"], values["screen.height"],

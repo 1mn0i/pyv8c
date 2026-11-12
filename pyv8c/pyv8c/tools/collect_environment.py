@@ -35,6 +35,11 @@ from ..foundation.environment import COLLECTED_KEYS, SCHEMA_VERSION, BrowserEnvi
 from ..web.bom.navigator import PERMISSION_NAMES
 from ..web.media.source import WEBRTC_CONTENT_TYPES, WEBRTC_VIDEO_FAMILIES, probe_candidates
 
+# Probe newer names without changing the packaged profile for older browsers.
+_PERMISSION_PROBE_NAMES = PERMISSION_NAMES | {
+    'local-network', 'local-network-access', 'loopback-network', 'top-level-storage-access',
+}
+
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 #: Where a run writes unless told otherwise.
 DEFAULT_OUTPUT = PACKAGE_ROOT / "data" / "chrome-environment.json"
@@ -135,7 +140,9 @@ _COLLECT_TEMPLATE = """
     const permissionSpecNames = {};
     for (const name of __PERMISSION_NAMES__) {
         try {
-            const descriptor = name === 'push' ? {name, userVisibleOnly: true} : {name};
+            const descriptor = name === 'push' ? {name, userVisibleOnly: true}
+                : name === 'top-level-storage-access' ? {name, requestedOrigin: location.origin}
+                : {name};
             const status = await navigator.permissions.query(descriptor);
             permissionNames.push(name);
             if (status.state === 'granted') permissionGranted.push(name);
@@ -214,6 +221,8 @@ _COLLECT_TEMPLATE = """
         'viewport.device_scale_factor': devicePixelRatio,
         'viewport.outer_inset_width': outerWidth - innerWidth,
         'viewport.outer_inset_height': outerHeight - innerHeight,
+        'viewport.screen_x': screenX,
+        'viewport.screen_y': screenY,
         'screen.width': screen.width,
         'screen.height': screen.height,
         'screen.avail_width': screen.availWidth,
@@ -276,7 +285,7 @@ COLLECT_SCRIPT = (_COLLECT_TEMPLATE
                   .replace("__MEDIA_CANDIDATES__", json.dumps(probe_candidates()))
                   .replace("__MEDIA_WEBRTC_TYPES__", json.dumps(list(WEBRTC_CONTENT_TYPES)))
                   .replace("__MEDIA_WEBRTC_FAMILIES__", json.dumps(WEBRTC_VIDEO_FAMILIES))
-                  .replace("__PERMISSION_NAMES__", json.dumps(sorted(PERMISSION_NAMES))))
+                  .replace("__PERMISSION_NAMES__", json.dumps(sorted(_PERMISSION_PROBE_NAMES))))
 
 
 #: What a page enumerates: the window's names, each prototype's members, each interface object's

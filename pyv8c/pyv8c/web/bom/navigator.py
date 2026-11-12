@@ -560,6 +560,13 @@ class Permissions:
     def __init__(self, services=None, environment=None, **_):
         self._services = services
         self._environment = BrowserEnvironment.from_dict(environment)
+        resolved = self._environment.resolved()
+        self._permission_names = (PERMISSION_NAMES if resolved['permissions.names'] is None
+                                  else self._environment.permissions.names)
+        self._permission_granted = (_PERMISSION_GRANTED if resolved['permissions.granted'] is None
+                                    else self._environment.permissions.granted)
+        self._permission_spec_names = (_PERMISSION_SPEC_NAMES if resolved['permissions.spec_names'] is None
+                                      else self._environment.permissions.spec_names)
         self._clipboard_read_status_name = None
 
     def fn_query(self, descriptor=MISSING, *_extra):
@@ -582,8 +589,9 @@ class Permissions:
                         or callable(descriptor))):
             raise PageTypeError(
                 "Failed to execute 'query' on 'Permissions': parameter 1 is not of type 'object'.")
-        names = self._environment.permissions.names or PERMISSION_NAMES
+        names = self._permission_names
         clipboard_read_status = False
+        state_override = None
         values = dictionary(descriptor)
         name = self._permission_name(values, names)
         if name == "push":
@@ -602,7 +610,21 @@ class Permissions:
             self._permission_name(values, names)
             without_gesture = boolean(values.get("allowWithoutGesture"))
             clipboard_read_status = name == "clipboard-read" or without_gesture
-        spec_names = self._environment.permissions.spec_names or _PERMISSION_SPEC_NAMES
+        elif name == "top-level-storage-access":
+            # Blink converts the derived descriptor after the base descriptor.
+            self._permission_name(values, names)
+            requested = values.get("requestedOrigin", pyv8.Undefined)
+            from .url import URL
+            try:
+                target = URL._resolve(usv_string(requested))
+            except (PageTypeError, IdlArgumentError, ValueError):
+                raise PageTypeError(
+                    "Failed to execute 'query' on 'Permissions': The requested origin is invalid.") from None
+            # Opaque origins cannot be trusted, even though a data document can
+            # itself inherit a secure context from its creator.
+            if urlsplit(target).scheme.lower() == 'data' or not is_secure_context(target):
+                state_override = 'denied'
+        spec_names = self._permission_spec_names
         status_name = spec_names.get(name, name)
         state_name = name
         if clipboard_read_status:
@@ -613,7 +635,7 @@ class Permissions:
             status_name = self._clipboard_read_status_name
             state_name = "clipboard-read"
         return PermissionStatus(
-            status_name, self._state(state_name), services=self._services)
+            status_name, state_override or self._state(state_name), services=self._services)
 
     @staticmethod
     def _permission_name(values, names):
@@ -643,13 +665,12 @@ class Permissions:
 
     def _state(self, name):
         if name == "geolocation":
-            granted = self._environment.geolocation.permission == "granted"
-            return "granted" if granted else "prompt"
+            return self._environment.geolocation.permission
         if name in ("background-fetch", "storage-access"):
             parent_window = getattr(self._services, "parent_window", None)
             if callable(parent_window) and parent_window() is not None:
                 return "prompt"
-        if name in (self._environment.permissions.granted or _PERMISSION_GRANTED):
+        if name in self._permission_granted:
             return "granted"
         return "denied" if name == "periodic-background-sync" else "prompt"
 

@@ -575,11 +575,13 @@ class Window(_SchedulingMixin, WindowProperties):
     def get_pageYOffset(self): return self.get_scrollY()
 
     def get_screenX(self):
-        """Where the window sits on the screen: the top-left corner here."""
+        """The configured horizontal position of the browser window."""
         self._require_same_origin()
-        return 0
+        return self._environment.viewport.screen_x
 
-    def get_screenY(self): self._require_same_origin(); return 0
+    def get_screenY(self):
+        self._require_same_origin()
+        return self._environment.viewport.screen_y
     def get_screenLeft(self): return self.get_screenX()
     def get_screenTop(self): return self.get_screenY()
 
@@ -838,7 +840,8 @@ class Window(_SchedulingMixin, WindowProperties):
         document = getattr(element, "ownerDocument", None)
         # Nothing is rendered in a tree no window owns, and CSSOM answers empty
         # values for one: that is what a document built by ``DOMParser`` is.
-        rendered = document is None or document.get_defaultView() is not pyv8.Null
+        rendered = (element.isConnected and document is not None
+                    and document.get_defaultView() is not pyv8.Null)
         return computed_style_object(element, rendered=rendered, layout_snapshot=layout_snapshot)
 
     def _post_message(self, source, message, target_origin="/", transfer=()):
