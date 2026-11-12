@@ -3,6 +3,23 @@
 from pyv8c import Browser
 
 
+def test_orientation_equal_dimensions_are_portrait_including_hidden_iframe():
+    browser = Browser(real_network=False, stub_logging='off')
+    try:
+        page = browser.new_profile().new_page()
+        page.set_content('<body></body>', url='https://example.test/')
+        assert page.evaluate("""(() => {
+          return ['width:100px;height:100px;border:0', 'display:none'].map(css => {
+            const f = document.createElement('iframe'); f.style.cssText = css;
+            document.body.appendChild(f); const w = f.contentWindow;
+            return [w.innerWidth, w.innerHeight, w.matchMedia('(orientation: portrait)').matches,
+                    w.matchMedia('(orientation: landscape)').matches];
+          });
+        })()""") == [[100, 100, True, False], [0, 0, True, False]]
+    finally:
+        browser.close()
+
+
 def test_resolution_screen_and_desktop_media_features():
     browser = Browser(real_network=False, stub_logging="off", environment={
         "viewport.width": 1280, "viewport.height": 720,

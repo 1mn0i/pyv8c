@@ -103,7 +103,7 @@ def _matches_feature(name, value, width, height, screen_width, screen_height,
     if base in ('color', 'color-index', 'monochrome'):
         return _compare(name, color_depth // 3 if base == 'color' else 0, integer_math(value))
     if name == "orientation":
-        return (value == ("landscape" if width >= height else "portrait")
+        return (value == ("landscape" if width > height else "portrait")
                 if value in ('landscape', 'portrait') else None)
     accepted = _FEATURE_VALUES.get(name, ())
     return accepted[0] == value if value in accepted else None
