@@ -19,7 +19,7 @@ def argument_page():
 
 
 def test_request_init_reads_members_in_chrome_order(argument_page):
-    expected = ['adAuctionHeaders', 'body', 'cache', 'credentials', 'duplex',
+    expected = ['body', 'cache', 'credentials', 'duplex',
                 'headers', 'integrity', 'keepalive', 'method', 'mode', 'priority',
                 'privateToken', 'redirect', 'referrer', 'referrerPolicy', 'signal',
                 'targetAddressSpace']
@@ -47,7 +47,7 @@ def test_request_init_stops_when_an_enum_conversion_throws(argument_page):
         }});
         try { new Request('https://example.test/', init); } catch (_) {}
         return keys;
-    })()''') == ['adAuctionHeaders', 'body', 'cache', 'credentials']
+    })()''') == ['body', 'cache', 'credentials']
 
 
 def test_input_event_init_reads_dictionary_members_in_chrome_order(argument_page):

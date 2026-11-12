@@ -16,10 +16,10 @@ from .headers import Headers
 from ..fileapi.blob import Blob, _array_buffer_bytes
 
 
-# Web IDL dictionary members are read in lexicographic order, including members
-# this implementation does not otherwise use.  Their getters are observable.
+# including members this implementation does not otherwise use. Their getters
+# are observable; the dictionary vocabulary can differ across browser versions.
 _REQUEST_INIT_MEMBERS = (
-    'adAuctionHeaders', 'body', 'cache', 'credentials', 'duplex', 'headers',
+    'body', 'cache', 'credentials', 'duplex', 'headers',
     'integrity', 'keepalive', 'method', 'mode', 'priority', 'privateToken',
     'redirect', 'referrer', 'referrerPolicy', 'signal', 'targetAddressSpace',
 )
