@@ -1,16 +1,41 @@
 import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 PYV8_ROOT = ROOT.parent / "pyv8"
+NATIVE_DIR = ROOT / "pyv8c" / "pyv8"
+
+
+def _use_installed_wheel():
+    """A clean CI checkout carries no compiled extension; use the installed wheel.
+
+    Locally the source tree normally has ``_pyv8.pyd`` / ``_pyv8.so`` and keeps
+    the original source-based run.  ``PYV8C_NATIVE_SMOKE_INSTALLED`` forces
+    either branch explicitly so both can be verified.
+    """
+    override = os.environ.get("PYV8C_NATIVE_SMOKE_INSTALLED")
+    if override is not None:
+        return override.strip().lower() not in ("", "0", "false", "no")
+    return not any(NATIVE_DIR.glob("_pyv8*.pyd")) and not any(NATIVE_DIR.glob("_pyv8*.so"))
 
 
 def _run(case):
     env = os.environ.copy()
-    paths = [str(PYV8_ROOT), str(ROOT)]
-    env["PYTHONPATH"] = os.pathsep.join(paths + ([env["PYTHONPATH"]] if env.get("PYTHONPATH") else []))
+    if _use_installed_wheel():
+        # ``python -c`` puts its working directory on sys.path.  Keep that and
+        # PYTHONPATH away from the checkout so the child imports the wheel the
+        # CI job just installed, not an extension-less source package.
+        env.pop("PYTHONPATH", None)
+        cwd = tempfile.gettempdir()
+    else:
+        paths = [str(PYV8_ROOT), str(ROOT)]
+        env["PYTHONPATH"] = os.pathsep.join(
+            paths + ([env["PYTHONPATH"]] if env.get("PYTHONPATH") else [])
+        )
+        cwd = str(ROOT)
     code = f"""
 import faulthandler
 import os
@@ -32,7 +57,7 @@ print('closed', flush=True)
 """
     return subprocess.run(
         [sys.executable, "-X", "faulthandler", "-c", code],
-        cwd=str(ROOT), env=env, capture_output=True, text=True, timeout=30,
+        cwd=cwd, env=env, capture_output=True, text=True, timeout=30,
     )
 
 

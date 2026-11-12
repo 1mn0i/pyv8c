@@ -4,6 +4,9 @@ This module must stay importable *without* the native :mod:`pyv8` extension:
 ``tests/unit`` is expected to run in environments that only have the Chromium
 metadata tooling.  Every runtime fixture therefore performs its import lazily
 and skips through :func:`pytest.importorskip` when the extension is missing.
+Setting ``PYV8C_OFFLINE=1`` hides the extension package at import time, so a
+clean checkout (package present, compiled binary absent) skips the same cases
+as the policy gate instead of re-raising a broken ``from . import _pyv8``.
 
 Nothing here is mandatory.  A test module that already declares a local
 ``browser``/``page`` fixture keeps its own definition -- the closer fixture
@@ -11,11 +14,30 @@ wins -- so adopting these helpers is incremental rather than all-or-nothing.
 """
 from __future__ import annotations
 
+import importlib.abc
+import os
+import sys
 import threading
 import time
 from urllib.parse import urlsplit
 
 import pytest
+
+if os.environ.get("PYV8C_OFFLINE") == "1":
+    # ``pytest.importorskip`` only skips when the ImportError names the module
+    # it asked for.  A checkout without the compiled binary instead raises
+    # ``cannot import name '_pyv8'`` from inside ``pyv8c.pyv8``, which pytest
+    # re-raises as a collection error.  Hiding the package at the finder level
+    # gives local runs, ``tools/check_policy.py`` and CI one identical rule.
+    class _NoNativeExtension(importlib.abc.MetaPathFinder):
+        def find_spec(self, fullname, path=None, target=None):
+            if fullname == "pyv8c.pyv8" or fullname.startswith("pyv8c.pyv8."):
+                raise ModuleNotFoundError(
+                    "pyv8c.pyv8 deliberately unavailable (PYV8C_OFFLINE)",
+                    name=fullname,
+                )
+
+    sys.meta_path.insert(0, _NoNativeExtension())
 
 ORIGIN = "http://127.0.0.1:9"
 

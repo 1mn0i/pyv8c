@@ -16,6 +16,11 @@ class Global:
 
 assert (Path(pyv8.__file__).parent / "icudtl.dat").is_file()
 assert importlib.import_module('pyv8c.pyv8') is pyv8 is binder.pyv8
+assert abs(importlib.import_module('pyv8c._audio_native').oscillator_waveform(
+    3, 123 / 4096, 10, 10, 0) - 0.1201339364) < 2e-6
+compressor = importlib.import_module('pyv8c._audio_native').CompressorDSP(44100)
+assert compressor.process(0.5, (-50, 40, 12, 0, 0.25)) == 0.0
+assert compressor.frame == 1
 assert 'pyv8' not in sys.modules
 assert not any(item.lower().startswith("pyv8<") or item.lower().startswith("pyv8>") or item.lower() == "pyv8" for item in metadata.requires("pyv8c") or ())
 from pyv8c.pyv8.devtools import DevToolsOptions

@@ -1347,21 +1347,19 @@ CASES = (
         """,
         expected=["12px", "rgb(1, 2, 3)", "rgb(1, 2, 3)"],
     ),
-    # -- what is still missing here ---------------------------------------------
     Repro(
         name="response_body_is_a_stream",
-        note="Excluded: there is no ReadableStream here, so a response has no body "
-             "to read as a stream.",
+        note="A Response made from a string exposes its body as a ReadableStream, so "
+             "the body is an object and is not null.",
         script="""
             (() => {
               const response = new Response('hello');
               return [typeof response.body, response.body === null];
             })()
         """,
-        expected=["undefined", False],
-        known_divergence="ReadableStream is not modelled; Chrome reports ['object',"
-        " false]",
+        expected=["object", False],
     ),
+    # -- what is still missing here ---------------------------------------------
     Repro(
         name="storage_spread_copies_the_entries",
         note="Excluded: Object.keys lists the stored names and reading one works, but "
@@ -3480,8 +3478,7 @@ CASES = (
     ),
     Repro(
         name="an_undeclared_property_reports_its_initial_value",
-        note="Excluded: only the properties the cascade starts from have an initial "
-             "value, so a supported property nobody declared computes to nothing.",
+        note="An undeclared margin longhand exposes its computed initial value.",
         html=EMPTY_PAGE,
         script="""
             (() => {
@@ -3490,9 +3487,7 @@ CASES = (
               return getComputedStyle(element).marginTop;
             })()
         """,
-        expected="",
-        known_divergence="margin-top computes to '' with nothing declared; Chrome"
-        " reports its initial '0px'",
+        expected="0px",
     ),
     Repro(
         name="atob_decodes_what_it_can",

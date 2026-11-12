@@ -9,7 +9,9 @@ remembering:
 * ``native-layout`` -- enforce the C++ source layout and include layering.
 * ``companions`` -- an implementation file changed with no test changed alongside it.
 * ``startup``    -- the documented startup measurement, against a recorded budget.
-* ``offline``    -- ``tests/unit`` runs with no native extension on the path.
+* ``offline``    -- ``tests/unit`` runs with no native extension on the path;
+                    a static pre-check also requires every module that reaches
+                    the extension to be guarded by ``pytest.importorskip``.
 * ``duplicates`` -- a test outside the corpus that repeats a corpus case, which is
                     a warning: the corpus case is the one run against Chrome.
 
@@ -243,40 +245,155 @@ def gate_duplicates(strict):
     return not strict
 
 
+#: The module the offline gate deliberately makes unavailable.  The static
+#: pre-check derives its list of native-bound modules from the package's own
+#: import graph, so adding an import that pulls in the engine cannot slip past a
+#: hand-maintained list.
+NATIVE_ROOT = "pyv8c.pyv8"
+
+
+def _top_level_imports(tree):
+    """``(module, line)`` for imports a module executes while being collected.
+
+    Function bodies and classes are left out: they do not run at collection
+    time.  ``try``/``if``/``with`` bodies do run, so they are walked.  Relative
+    imports are resolved by the runtime pytest pass that follows this check.
+    """
+    found = []
+
+    def visit(nodes):
+        for node in nodes:
+            if isinstance(node, ast.Import):
+                found.extend((alias.name, node.lineno) for alias in node.names)
+            elif isinstance(node, ast.ImportFrom):
+                if node.module:
+                    found.append((node.module, node.lineno))
+                    found.extend(
+                        (f"{node.module}.{alias.name}", node.lineno) for alias in node.names
+                    )
+            elif isinstance(node, ast.Try):
+                visit(node.body)
+                visit(node.orelse)
+                visit(node.finalbody)
+                for handler in node.handlers:
+                    visit(handler.body)
+            elif isinstance(node, (ast.If, ast.With)):
+                visit(node.body)
+                visit(node.orelse)
+
+    visit(tree.body)
+    return found
+
+
+def _package_import_graph():
+    """``{module: [top-level imports]}`` for the shipped package."""
+    package_root = REPO / "pyv8c"
+    graph = {}
+    for path in package_root.rglob("*.py"):
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8-sig"))
+        except (SyntaxError, UnicodeDecodeError):
+            continue
+        parts = list(path.relative_to(package_root).with_suffix("").parts)
+        if parts[-1] == "__init__":
+            parts.pop()
+        graph[".".join(parts)] = [name for name, _ in _top_level_imports(tree)]
+    return graph
+
+
+def native_bound_modules():
+    """Modules whose import reaches the embedded engine, directly or transitively."""
+    graph = _package_import_graph()
+    native_prefix = NATIVE_ROOT + "."
+    bound = {m for m in graph if m == NATIVE_ROOT or m.startswith(native_prefix)}
+    while True:
+        added = {
+            module for module, imported in graph.items()
+            if any(name in bound or name == NATIVE_ROOT or name.startswith(native_prefix)
+                   for name in imported)
+        } - bound
+        if not added:
+            return bound
+        bound |= added
+
+
+def _guard_lines(tree):
+    """Lines of module-level ``pytest.importorskip("pyv8c.pyv8")`` calls.
+
+    Both a bare call and the ``pyv8 = pytest.importorskip(...)`` form count; a
+    call inside a test function is too late to protect a top-level import.
+    """
+    lines = []
+    for statement in tree.body:
+        if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            continue
+        for node in ast.walk(statement):
+            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "importorskip" and node.args
+                    and isinstance(node.args[0], ast.Constant)
+                    and node.args[0].value == NATIVE_ROOT):
+                lines.append(node.lineno)
+    return lines
+
+
+def offline_guard_findings():
+    """``(path, line, module)`` for unit tests that reach the engine unguarded."""
+    # ``_audio_native`` is a separate compiled extension shipped in the same
+    # wheel.  It does not import ``pyv8c.pyv8``, so the import graph alone will
+    # not flag a unit test that needs it.
+    bound = native_bound_modules() | {"pyv8c._audio_native"}
+    findings = []
+    unit = REPO / "pyv8c" / "tests" / "unit"
+    for path in sorted(unit.glob("test_*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8-sig"))
+        triggers = [(line, name) for name, line in _top_level_imports(tree) if name in bound]
+        if not triggers:
+            continue
+        guards = _guard_lines(tree)
+        if not guards or min(guards) > min(line for line, _ in triggers):
+            line, name = min(triggers)
+            findings.append((path.relative_to(REPO).as_posix(), line, name))
+    return findings
+
+
 def gate_offline():
     """``tests/unit`` has to run with no native extension on the import path.
 
-    That is where the offline extractor is used; a module importing the embedded
-    engine fails there as a collection error when the native extension is absent.
-    ``PYV8C_OFFLINE`` keeps this gate's own test from recursing.
+    A static pre-check runs first: a unit test whose top-level imports reach
+    the embedded engine must call ``pytest.importorskip("pyv8c.pyv8")`` before
+    them.  Without it the module fails during collection and pytest reports a
+    traceback instead of the file that broke the offline rule.
+    ``PYV8C_OFFLINE`` asks ``tests/conftest.py`` to hide the extension package
+    and also keeps this gate's own test from recursing.
     """
+    findings = offline_guard_findings()
+    if findings:
+        print("!    offline: tests/unit imports the native extension without a guard:")
+        for path, line, module in findings:
+            print(f"       {path}:{line} imports {module}")
+        print(f'       add pytest.importorskip("{NATIVE_ROOT}") above those imports,'
+              " or move the test to tests/browser / tests/integration")
+        return False
+
     environment = os.environ.copy()
     environment["PYTHONPATH"] = str(REPO / "pyv8c")
     environment["PYV8C_OFFLINE"] = "1"
-    # Editable installations and the root pytest configuration can otherwise put
-    # the embedded engine back on sys.path, masking an unintended dependency.
-    runner = """
-import importlib.abc
-import sys
-import pytest
-
-class NoNative(importlib.abc.MetaPathFinder):
-    def find_spec(self, fullname, path=None, target=None):
-        if fullname == 'pyv8c.pyv8' or fullname.startswith('pyv8c.pyv8.'):
-            raise ModuleNotFoundError('pyv8c.pyv8 deliberately unavailable', name=fullname)
-
-sys.meta_path.insert(0, NoNative())
-raise SystemExit(pytest.main(['-c', 'pytest.ini', 'pyv8c/tests/unit', '-q']))
-"""
+    # Editable installs and the root pytest configuration can otherwise put the
+    # embedded engine back on sys.path, masking an unintended dependency.  The
+    # conftest finder is the single implementation of "no native extension".
     result = subprocess.run(
-        [sys.executable, "-c", runner],
+        [sys.executable, "-m", "pytest", "-c", "pytest.ini",
+         "pyv8c/tests/unit", "-q", "--no-header"],
         cwd=REPO,
         env=environment,
         capture_output=True,
         text=True,
     )
     if result.returncode == 0:
-        print("ok   offline: tests/unit runs without the native extension")
+        tail = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+        summary = tail[-1] if tail else ""
+        print("ok   offline: tests/unit runs without the native extension"
+              + (f" [{summary[:110]}]" if summary else ""))
         return True
     print("!    offline: tests/unit needs the native extension:")
     for line in [line for line in result.stdout.strip().splitlines() if line.strip()][-4:]:
