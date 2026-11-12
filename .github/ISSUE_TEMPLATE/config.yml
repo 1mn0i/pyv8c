@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 安全漏洞与滥用举报
+    url: https://github.com/ConlinH/pyv8c/security/advisories/new
+    about: 请勿在公开 issue 中提交漏洞或涉及真实站点的数据，详见 .github/SECURITY.md
+  - name: 许可与预期用途
+    url: https://github.com/ConlinH/pyv8c#许可与预期用途
+    about: 了解 MIT 许可、预期用途、社区支持范围与商标声明

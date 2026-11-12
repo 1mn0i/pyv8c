@@ -1,0 +1,58 @@
+name: 缺陷报告
+description: 报告 pyv8c 自身的行为、兼容性或构建问题
+title: "[Bug] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        提交前请先阅读 [贡献指南](https://github.com/ConlinH/pyv8c/blob/main/.github/CONTRIBUTING.md)。
+
+        - 安全漏洞请勿在公开 issue 中提交，改用 [私有安全公告](https://github.com/ConlinH/pyv8c/security/advisories/new)。
+        - 请勿附带真实站点的凭据、Cookie、挑战令牌、HAR 或私有脚本。
+        - 本项目不提供以绕过第三方站点访问控制或批量采集真实站点数据为目的的支持。
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: 使用范围确认
+      options:
+        - label: 我确认本次使用已获得目标系统授权，且提交内容不含真实站点的凭据或私有数据
+          required: true
+  - type: input
+    id: version
+    attributes:
+      label: pyv8c 版本或提交号
+      placeholder: 0.1.0 或 commit SHA
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: 操作系统
+      options:
+        - Windows
+        - Linux
+        - macOS
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: 最小复现步骤
+      description: 优先使用离线 set_content 或自建靶站；与 Chrome 行为不一致时请附两侧结果
+      placeholder: |
+        1. ...
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 预期行为与实际行为
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: 日志或回溯
+      description: 请脱敏后粘贴
+      render: shell
