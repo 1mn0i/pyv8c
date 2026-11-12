@@ -1,0 +1,42 @@
+name: Source checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  policy:
+    runs-on: ubuntu-latest
+    env:
+      # A plain checkout has the pyv8c.pyv8 package but no compiled extension.
+      # tests/conftest.py hides that package at the import level when this is
+      # set, so pytest.importorskip skips cleanly instead of re-raising
+      # "cannot import name '_pyv8'" as a collection error.
+      PYV8C_OFFLINE: '1'
+      PYTHONPATH: ${{ github.workspace }}/pyv8c
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install offline dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pytest pytest-timeout loguru "curl_cffi>=0.7" \
+            "websockets>=16" "uharfbuzz>=0.56" "uniseg>=0.9" \
+            "tldextract>=5.3,<6" "idna>=3.6,<4"
+      - name: Verify license metadata and bundled notices
+        run: python tools/check_license.py
+      - name: Run source-only policy gates
+        # startup needs the compiled extension; layers spawns child processes
+        # that really import Web modules; companions diffs the local working
+        # tree (empty in CI). Those three belong to the wheel jobs / local
+        # pre-commit. The offline gate here also runs tests/unit with the
+        # native extension hidden.
+        run: python tools/check_policy.py --gates native-layout,offline,duplicates
+      - name: Run the offline unit suite
+        run: python -m pytest -c pytest.ini pyv8c/tests/unit -q -rs

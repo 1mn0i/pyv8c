@@ -35,12 +35,13 @@ jobs:
       PYV8_GN_ARGS: ''
     steps:
       - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
           architecture: x64
       - name: Install build tools
-        run: python -m pip install --upgrade pip build twine "setuptools>=77" wheel
+        run: python -m pip install --upgrade pip build twine "setuptools>=77" "setuptools-rust>=1.10,<2" wheel
       - name: Select a complete Windows SDK
         id: sdk
         shell: pwsh
@@ -113,6 +114,11 @@ jobs:
           python -m build --wheel --outdir dist .
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python -m twine check dist/*
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Get-ChildItem dist/*.whl | ForEach-Object {
+            python tools/check_license.py --artifact $_.FullName
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
       - name: Save V8 build cache
         if: ${{ steps.v8-cache.outputs.cache-hit != 'true' }}
         continue-on-error: true
@@ -154,12 +160,21 @@ jobs:
           python -m pip install --upgrade pip
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $wheels = Get-ChildItem dist/*.whl | ForEach-Object { $_.FullName }
-          python -m pip install $wheels
+          python -m pip install $wheels pytest pytest-timeout
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python -m pip check
       - name: Verify installed wheels outside checkout
         working-directory: ${{ runner.temp }}
         run: python -I "${{ github.workspace }}/tools/smoke_wheels.py"
+      - name: Test installed wheel audio
+        working-directory: ${{ runner.temp }}
+        run: python -I "${{ github.workspace }}/tools/check_installed_audio.py"
+      - name: Test native crash smoke on installed wheel
+        working-directory: ${{ runner.temp }}
+        run: python -m pytest "${{ github.workspace }}/pyv8c/tests/native/test_native_smoke.py" -q
+      - name: Check architecture layering on installed wheel
+        if: ${{ matrix.python == '3.12' }}
+        run: python tools/check_policy.py --gates layers
       - name: Test experimental ANGLE backend
         if: ${{ inputs.angle && matrix.python == '3.12' }}
         shell: pwsh
@@ -182,6 +197,7 @@ jobs:
       PYV8_TARGET_CPU: x64
     steps:
       - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
       - name: Select Python and persistent V8 cache
         shell: bash
         run: |
@@ -202,7 +218,7 @@ jobs:
           venv_dir="$(mktemp -d "$RUNNER_TEMP/pyv8c-ci-venv.XXXXXX")"
           "$PYV8_PYTHON" -m venv "$venv_dir"
           echo "$venv_dir/bin" >> "$GITHUB_PATH"
-          "$venv_dir/bin/python" -m pip install --upgrade pip build twine 'setuptools>=77' wheel pytest pytest-timeout pytest-repeat pytest-xdist
+          "$venv_dir/bin/python" -m pip install --upgrade pip build twine 'setuptools>=77' 'setuptools-rust>=1.10,<2' wheel pytest pytest-timeout pytest-repeat pytest-xdist
       - name: Prepare V8
         shell: bash
         working-directory: pyv8
@@ -213,6 +229,7 @@ jobs:
           set -euo pipefail
           python -m build --wheel --no-isolation --outdir dist .
           python -m twine check dist/*.whl
+          for wheel in dist/*.whl; do python tools/check_license.py --artifact "$wheel"; done
           python -m pip install dist/*.whl
           python -m pip check
       - name: Test native argument bridge
@@ -222,6 +239,14 @@ jobs:
         shell: bash
         working-directory: ${{ runner.temp }}
         run: python -I "$GITHUB_WORKSPACE/tools/smoke_wheels.py"
+      - name: Test installed wheel audio
+        shell: bash
+        working-directory: ${{ runner.temp }}
+        run: python -I "$GITHUB_WORKSPACE/tools/check_installed_audio.py"
+      - name: Test native crash smoke on installed wheel
+        shell: bash
+        working-directory: ${{ runner.temp }}
+        run: python -m pytest "$GITHUB_WORKSPACE/pyv8c/tests/native/test_native_smoke.py" -q
       - name: Test experimental ANGLE backend
         if: ${{ inputs.angle }}
         shell: bash
@@ -246,6 +271,7 @@ jobs:
       PYV8_V8_JOBS: '2'
     steps:
       - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -264,7 +290,7 @@ jobs:
           echo "image=$ImageVersion" >> "$GITHUB_OUTPUT"
           echo "v8-version=$(tr -d '\r\n' < pyv8/V8_VERSION)" >> "$GITHUB_OUTPUT"
       - name: Install build and test tools
-        run: python -m pip install --upgrade pip build twine 'setuptools>=77' wheel pytest pytest-timeout pytest-repeat pytest-xdist
+        run: python -m pip install --upgrade pip build twine 'setuptools>=77' 'setuptools-rust>=1.10,<2' wheel pytest pytest-timeout pytest-repeat pytest-xdist
       - name: Restore V8 build cache
         id: v8-cache
         continue-on-error: true
@@ -292,6 +318,7 @@ jobs:
           set -euo pipefail
           python -m build --wheel --no-isolation --outdir dist .
           python -m twine check dist/*.whl
+          for wheel in dist/*.whl; do python tools/check_license.py --artifact "$wheel"; done
           python -m pip install dist/*.whl
           python -m pip check
       - name: Test native argument bridge
@@ -299,6 +326,12 @@ jobs:
       - name: Verify installed wheel outside checkout
         working-directory: ${{ runner.temp }}
         run: python -I "$GITHUB_WORKSPACE/tools/smoke_wheels.py"
+      - name: Test installed wheel audio
+        working-directory: ${{ runner.temp }}
+        run: python -I "$GITHUB_WORKSPACE/tools/check_installed_audio.py"
+      - name: Test native crash smoke on installed wheel
+        working-directory: ${{ runner.temp }}
+        run: python -m pytest "$GITHUB_WORKSPACE/pyv8c/tests/native/test_native_smoke.py" -q
       - name: Test experimental ANGLE backend
         if: ${{ inputs.angle }}
         shell: bash
