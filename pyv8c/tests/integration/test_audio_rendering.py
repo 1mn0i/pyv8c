@@ -1,7 +1,10 @@
 """An offline context renders its graph: the samples an oscillator really produces."""
 import math
+import sys
+import pytest
 
 from pyv8c import Browser
+from pyv8c.web.bom.audio import _OSCILLATOR_X86
 
 RATE = 44100
 LENGTH = 512
@@ -100,6 +103,94 @@ def test_a_waveform_keeps_the_amplitude_of_the_harmonics_it_has_left():
             assert abs(energy - rms) < 1e-3, (kind, frequency, energy, rms)
     finally:
         browser.close()
+
+
+@pytest.mark.skipif(not _OSCILLATOR_X86, reason='Chrome reference uses x86 vector interpolation')
+@pytest.mark.parametrize('frequency_setting', ['o.frequency.value = 10000;',
+                                               'o.frequency.setValueAtTime(10000, 0);'])
+def test_triangle_phase_matches_chrome_across_render_quanta(frequency_setting):
+    browser, page = _open()
+    try:
+        samples = _render(page, """
+            const c = new OfflineAudioContext(1, 5000, 44100), o = c.createOscillator();
+            o.type = 'triangle';
+        """ + frequency_setting + """
+            o.connect(c.destination); o.start();
+            const a = (await c.startRendering()).getChannelData(0);
+            window.__rendered = [99,106,110,115,119,123,126,128,129].map(i => a[i])
+                .concat(Array.from(a.slice(4500, 4512)));
+        """)
+    finally:
+        browser.close()
+    assert samples == pytest.approx([
+        0.25547096133232117, 0.1832147240638733, -0.28270959854125977,
+        0.3775476813316345, -0.08072683960199356, -0.512229323387146,
+        -0.3517583906650543, 0.12653622031211853, 0.8106836676597595,
+        0.44241952896118164, -0.6077620387077332, -0.6193006634712219,
+        0.4275202751159668, 0.7437264323234558, -0.21106889843940735,
+        -0.8051546812057495, -0.02326374314725399, 0.7983841300010681,
+        0.25562307238578796, -0.7239880561828613, -0.4663325846195221,
+    ], abs=5e-7)
+
+
+@pytest.mark.skipif(sys.platform != 'win32' or not _OSCILLATOR_X86,
+                    reason='reference vector is from Chrome 157 on Windows x86')
+def test_offline_triangle_compressor_matches_chrome_float32_sum():
+    browser, page = _open()
+    try:
+        total = _render(page, """
+            const c = new OfflineAudioContext(1, 5000, 44100), o = c.createOscillator();
+            o.type = 'triangle'; o.frequency.setValueAtTime(10000, 0);
+            const d = c.createDynamicsCompressor();
+            d.threshold.value = -50; d.knee.value = 40; d.ratio.value = 12;
+            d.attack.value = 0; d.release.value = .25;
+            o.connect(d).connect(c.destination); o.start();
+            const a = (await c.startRendering()).getChannelData(0);
+            window.__rendered = Array.from(a.slice(4500, 5000)).reduce((sum, v) => sum + Math.abs(v), 0);
+        """)
+    finally:
+        browser.close()
+    assert total == 124.04347776696522
+
+
+@pytest.mark.skipif(sys.platform != 'win32' or not _OSCILLATOR_X86,
+                    reason='reference samples are from Chrome 157 on Windows x86')
+def test_compressor_automation_clamps_after_interpolation_at_render_quanta():
+    browser, page = _open()
+    try:
+        samples = _render(page, """
+            const c = new OfflineAudioContext(1, 5000, 44100), o = c.createOscillator();
+            o.frequency.value = 1000;
+            const d = c.createDynamicsCompressor();
+            d.threshold.setValueAtTime(-50, 0);
+            d.threshold.linearRampToValueAtTime(-1000, 0.1);
+            o.connect(d).connect(c.destination); o.start();
+            const a = (await c.startRendering()).getChannelData(0);
+            window.__rendered = [a[1000], a[2000], a[4000]];
+        """)
+    finally:
+        browser.close()
+    assert samples == pytest.approx([-0.03327003866434097, 0.026643099263310432,
+                                      -0.03499085083603859], abs=2e-4)
+
+
+def test_compressor_parameter_value_and_automation_rate_match_chrome():
+    browser, page = _open()
+    try:
+        result = page.evaluate("""(() => {
+            const d = new OfflineAudioContext(1, 100, 44100).createDynamicsCompressor();
+            d.threshold.value = -1000;
+            const low = d.threshold.value;
+            d.threshold.value = 1000;
+            const high = d.threshold.value;
+            let error;
+            try { d.threshold.automationRate = 'k-rate'; }
+            catch (e) { error = e.name; }
+            return [low, high, d.threshold.automationRate, error];
+        })()""")
+    finally:
+        browser.close()
+    assert result == [-100, 0, 'k-rate', 'InvalidStateError']
 
 
 def test_a_gain_ramp_scales_the_tone_as_it_climbs():
@@ -282,3 +373,21 @@ def test_a_waveform_scale_is_the_peak_of_its_series():
     for kind in ("sine", "square", "sawtooth", "triangle"):
         peak = max(abs(value) for value in _wave_samples(kind, _WAVE_POINTS // 2)) or 1.0
         assert _wave_scale(kind) == 1.0 / peak, kind
+
+
+def test_high_frequency_oscillator_uses_chromium_phase_increment():
+    browser, page = _open()
+    try:
+        samples = _render(page, '''
+            const context = new OfflineAudioContext(1, 4600, 44100);
+            const oscillator = context.createOscillator();
+            oscillator.type = 'triangle'; oscillator.frequency.value = 10000;
+            oscillator.connect(context.destination); oscillator.start();
+            const data = (await context.startRendering()).getChannelData(0);
+            window.__rendered = Array.from(data.slice(4500,4504));
+        ''')
+        reference = [0.44241952896118164, -0.6077620387077332,
+                     -0.6193006634712219, 0.4275202751159668]
+        assert all(abs(actual - expected) < 0.00001 for actual, expected in zip(samples, reference))
+    finally:
+        browser.close()

@@ -29,6 +29,9 @@ dist/
 pyv8c/pyv8c/pyv8/_pyv8*.pyd
 pyv8c/pyv8c/pyv8/_pyv8*.so
 pyv8c/pyv8c/pyv8/icudtl.dat
+pyv8c/pyv8c/_audio_native*.pyd
+pyv8c/pyv8c/_audio_native*.so
+pyv8c/audio_native/target/
 
 # Extracted bundled-IDL caches. Releases only contain the ZIP artifact.
 pyv8c/pyv8c/idl/*.json

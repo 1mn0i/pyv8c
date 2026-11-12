@@ -323,3 +323,18 @@ def test_a_live_context_reports_chromes_base_latency():
         })()""") == [48000, 0.01, 0, 2]
     finally:
         browser.close()
+
+
+def test_audio_param_values_use_binary32():
+    browser, page = _open()
+    try:
+        values = page.evaluate('''(() => {
+            const context = new AudioContext();
+            const param = context.createDynamicsCompressor().attack;
+            const initial = [param.value, param.defaultValue];
+            param.value = 0.1;
+            return [...initial, param.value];
+        })()''')
+        assert list(values) == [0.003000000026077032, 0.003000000026077032, 0.10000000149011612]
+    finally:
+        browser.close()

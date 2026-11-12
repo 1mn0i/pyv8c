@@ -3,6 +3,7 @@ from pathlib import Path
 import sys
 
 from setuptools import find_packages, setup
+from setuptools_rust import Binding, RustExtension
 
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
@@ -19,6 +20,9 @@ setup(
                   'pyv8c.pyv8': ['_pyv8.pyi', '__init__.pyi', 'py.typed', 'icudtl.dat']},
     include_package_data=False,
     ext_modules=ext_modules,
+    rust_extensions=[RustExtension('pyv8c._audio_native', path='pyv8c/audio_native/Cargo.toml',
+                                   binding=Binding.PyO3, py_limited_api=True,
+                                   args=['--locked'])],
     cmdclass={'build_ext': PyV8BuildExt, 'build_v8': BuildV8,
               'list_v8_versions': ListV8Versions},
     options={'bdist_wheel': {'py_limited_api': 'cp312'}},

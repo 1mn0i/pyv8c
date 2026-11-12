@@ -6,7 +6,9 @@ shape of it, since there is no device to play it on.
 
 import array
 from collections import deque
+from functools import lru_cache
 import math
+import platform
 import sys
 
 from pyv8c import pyv8
@@ -58,6 +60,20 @@ def _double(value, what):
         raise PageTypeError(f"The provided value for {what} is not of type 'double'.") from exc
 
 
+def _float32(value, what):
+    """Convert a Web IDL float to the finite IEEE-754 binary32 value."""
+    value = _double(value, what)
+    if not math.isfinite(value):
+        raise PageTypeError(f"The provided value for {what} is not a finite float.")
+    try:
+        result = array.array('f', [value])[0]
+    except OverflowError as exc:
+        raise PageTypeError(f"The provided value for {what} is outside the float range.") from exc
+    if not math.isfinite(result):
+        raise PageTypeError(f"The provided value for {what} is outside the float range.")
+    return result
+
+
 @interface('AudioParam', None)
 class AudioParam:
     """One automatable number, and the points scheduled on it."""
@@ -65,16 +81,18 @@ class AudioParam:
         # Absent: ``fn_<name>`` binds them, and the bodies below answer.
 
     def __init__(self, value=1.0, default=None, minimum=-_PARAM_MAX, maximum=_PARAM_MAX, **_):
-        self._value = float(value)
-        self._default = float(value if default is None else default)
+        self._value = _float32(value, "AudioParam.value")
+        self._default = _float32(value if default is None else default, "AudioParam.defaultValue")
         self._minimum = float(minimum)
         self._maximum = float(maximum)
         self._automation_rate = "a-rate"
+        self._fixed_automation_rate = None
         #: ``(time, value, kind, time constant)``, in time order.
         self._events = []
 
     def get_value(self): return self._value
-    def set_value(self, value): self._value = _double(value, "AudioParam.value")
+    def set_value(self, value):
+        self._value = min(self._maximum, max(self._minimum, _float32(value, "AudioParam.value")))
     def get_defaultValue(self): return self._default
     def get_minValue(self): return self._minimum
     def get_maxValue(self): return self._maximum
@@ -83,6 +101,11 @@ class AudioParam:
         value = dom_string(value)
         if value not in ("a-rate", "k-rate"):
             raise PageTypeError(f"The provided value '{value}' is not a valid enum value.")
+        if self._fixed_automation_rate is not None:
+            raise dom_exception('InvalidStateError',
+                                "Failed to set the 'automationRate' property on 'AudioParam': "
+                                f'{self._fixed_automation_rate}.automationRate is fixed and cannot '
+                                f'be changed to "{value}"')
         self._automation_rate = value
 
     def value_at(self, seconds):
@@ -106,7 +129,7 @@ class AudioParam:
     def _point(self, name, count, value, time):
         if time is MISSING:
             raise missing_error('AudioParam', name, count, 0, constructor=False)
-        return _double(time, f"AudioParam.{name}"), _double(value, f"AudioParam.{name}")
+        return _double(time, f"AudioParam.{name}"), _float32(value, f"AudioParam.{name}")
 
     def _schedule(self, time, value, kind, constant=0.0):
         self._events.append((time, value, kind, constant))
@@ -183,9 +206,30 @@ def _target(event, start, seconds):
 #: How many points one period of a waveform is sampled into.
 _WAVE_POINTS = 4096
 
+# Blink uses four float lanes for ordinary k-rate oscillators on x86.
+_OSCILLATOR_X86 = platform.machine().lower() in ('amd64', 'x86_64', 'x86', 'i386', 'i686')
+
 
 #: The tables built so far, keyed by the waveform and the harmonics it may carry.
 _WAVE_TABLES = {}
+
+
+@lru_cache(maxsize=1024)
+def _chrome_wave_bands(frequency, rate):
+    f = lambda x: _float32(x, 'oscillator band')
+    ratio = f(frequency / f(rate / _WAVE_POINTS))
+    cents = f(f(math.log2(ratio)) * 1200.)
+    pitch = min(35., max(0., f(1. + f(cents / 400.))))
+    index = int(pitch)
+    return index, min(index + 1, 35), f(pitch - index)
+
+
+def _chrome_waveform(kind, phase, frequency, rate):
+    """Read FFT bands using the same interpolation as the batch renderer."""
+    from ... import _audio_native
+    high, low, mix = _chrome_wave_bands(frequency, rate)
+    return _audio_native.oscillator_waveform(
+        ('sine', 'square', 'sawtooth', 'triangle').index(kind), phase, high, low, mix)
 
 
 def _coefficients(kind, limit):
@@ -244,6 +288,27 @@ def _build_wave(kind, limit):
     return [value * scale for value in _wave_samples(kind, limit)]
 
 
+@lru_cache(maxsize=1024)
+def _wave_bands(frequency, rate):
+    """Adjacent octave-third tables and the mix for a 4096-point wave."""
+    ratio = frequency / (rate / _WAVE_POINTS)
+    last = 3 * int(math.log2(_WAVE_POINTS)) - 1
+    pitch = max(0.0, min(float(last), 1.0 + 3.0 * math.log2(ratio)))
+    index = int(pitch)
+    def partials(band):
+        return int((_WAVE_POINTS / 2) * 2.0 ** (-band / 3.0))
+    return partials(index), partials(min(index + 1, last)), pitch - index
+
+
+def _wave_table(kind, partials):
+    key = (kind, partials)
+    table = _WAVE_TABLES.get(key)
+    if table is None:
+        table = _build_wave(kind, partials)
+        _WAVE_TABLES[key] = table
+    return table
+
+
 def _waveform(kind, phase, frequency, rate):
     """One sample of the waveform, band-limited to the harmonics *frequency* can carry."""
     if kind == "custom":
@@ -251,15 +316,26 @@ def _waveform(kind, phase, frequency, rate):
     limit = int(rate / 2 / frequency) if frequency > 0 else 0
     if limit < 1:
         return 0.0
-    table = _WAVE_TABLES.get((kind, limit))
-    if table is None:
-        table = _build_wave(kind, limit)
-        _WAVE_TABLES[(kind, limit)] = table
+    if (_OSCILLATOR_X86 and 24000 < rate <= 88200
+            and frequency * (_WAVE_POINTS / rate) >= .3 and frequency <= rate / 2):
+        return _chrome_waveform(kind, phase, frequency, rate)
+    # Chromium creates three band-limited tables per octave and blends the
+    # adjacent tables. A hard Nyquist cutoff changes low-frequency waveforms.
+    if 24000 < rate <= 88200 and frequency <= rate / 2:
+        high, low, mix = _wave_bands(frequency, rate)
+    else:
+        high, low, mix = limit, limit, 0.0
+    table = _wave_table(kind, high)
     position = phase * _WAVE_POINTS
     index = int(position)
     following = (index + 1) % _WAVE_POINTS
     fraction = position - index
-    return table[index] + (table[following] - table[index]) * fraction
+    sample = table[index] + (table[following] - table[index]) * fraction
+    if mix and high != low:
+        lower = _wave_table(kind, low)
+        other = lower[index] + (lower[following] - lower[index]) * fraction
+        sample += (other - sample) * mix
+    return sample
 
 
 @interface('AudioNode', 'EventTarget')
@@ -374,6 +450,9 @@ class OscillatorNode(AudioScheduledSourceNode):
         self._detune = AudioParam(0.0)
         self._phase = 0.0
         self._periodic = None
+        self._vector_lanes = None
+        self._vector_lane = 0
+        self._vector_increment = None
 
     def get_type(self): return self._type
     def set_type(self, value):
@@ -401,13 +480,67 @@ class OscillatorNode(AudioScheduledSourceNode):
         rate = self._context.get_sampleRate() if self._context is not None else SAMPLE_RATE
         detune = self._detune.value_at(seconds)
         frequency = self._frequency.value_at(seconds) * 2.0 ** (detune / 1200.0)
+        rate_scale = _float32(_WAVE_POINTS / rate, "OscillatorNode rate scale")
+        increment = _float32(frequency * rate_scale, "OscillatorNode phase increment")
+        # Chromium's x86 k-rate path advances four float indices within each
+        # render quantum, while preserving a double-precision phase across it.
+        # Keep changing automation and nonzero-start oscillators on the general
+        # path. A setValueAtTime at zero is constant for the whole render.
+        frequency_constant = all(event[0] <= 0 and event[2] == 'value'
+                                 for event in self._frequency._events)
+        detune_constant = all(event[0] <= 0 and event[2] == 'value'
+                              for event in self._detune._events)
+        frame = round(seconds * rate)
+        vector = (_OSCILLATOR_X86 and self._start == 0 and self._type != 'custom'
+                  and frequency_constant and detune_constant
+                  and frame >= RENDER_QUANTUM and 24000 < rate <= 88200 and increment >= .3)
+        from ... import _audio_native
+        phase, next_phase, lanes, lane, previous_increment = _audio_native.oscillator_phase_step(
+            self._phase, self._vector_lanes, self._vector_lane,
+            self._vector_increment, increment, frame, vector)
         if self._type == "custom" and self._periodic is not None:
-            sample = self._periodic.sample(self._phase, frequency, rate)
+            sample = self._periodic.sample(phase, frequency, rate)
         else:
             sample = _waveform("sine" if self._type == "custom" else self._type,
-                               self._phase, frequency, rate)
-        self._phase = (self._phase + frequency / rate) % 1.0
+                               phase, frequency, rate)
+        # Blink computes the wavetable rate scale and increment as floats,
+        # then accumulates the read index in double precision.
+        self._phase = next_phase
+        self._vector_lanes = list(lanes) if lanes is not None else None
+        self._vector_lane = lane
+        self._vector_increment = previous_increment
         return sample
+
+
+def _constant_oscillator_batch(node, length, rate):
+    """Render a supported constant oscillator ahead of the sample loop."""
+    if (not _OSCILLATOR_X86 or not length or not 24000 < rate <= 88200
+            or node._start != 0 or node._stop < length / rate or node._phase != 0
+            or node._vector_lanes is not None or node._type == 'custom'):
+        return None
+    params = (node._frequency, node._detune)
+    if any(any(time > 0 or kind != 'value' for time, _value, kind, _constant in p._events)
+           for p in params):
+        return None
+    try:
+        frequency = node._frequency.value_at(0) * 2.0 ** (node._detune.value_at(0) / 1200.0)
+        if not math.isfinite(frequency) or not 0 < frequency <= rate / 2:
+            return None
+        increment = _float32(frequency * _float32(_WAVE_POINTS / rate, 'rate'), 'increment')
+        if increment < .3 or frequency * (_WAVE_POINTS / rate) < .3:
+            return None
+        high, low, mix = _chrome_wave_bands(frequency, rate)
+    except (OverflowError, ValueError):
+        return None
+    from ... import _audio_native
+    payload, phase, lanes, lane = _audio_native.oscillator_block(
+        ('sine', 'square', 'sawtooth', 'triangle').index(node._type),
+        length, increment, high, low, mix)
+    values = array.array('f')
+    values.frombytes(payload)
+    if sys.byteorder != 'little':
+        values.byteswap()
+    return values, phase, lanes, lane, increment
 
 
 @interface('AnalyserNode', 'AudioNode')
@@ -815,12 +948,46 @@ class OfflineAudioContext(BaseAudioContext):
         """The samples the graph produces, one at a time, in the order it is wired in."""
         order = self._order()
         rate = self._sample_rate
-        samples = []
-        for index in range(self._length):
-            seconds = index / rate
+        # Batch only nodes that cannot change another node's parameters while
+        # rendering. Other graphs keep the general sample-by-sample path.
+        batches = {}
+        if not self._observers and all(type(node) in (OscillatorNode, GainNode, DynamicsCompressorNode)
+                                       for node in order):
             for node in order:
-                node._out = node._compute(seconds)
-            samples.append(sum(source._out for source in self._destination._inputs))
+                if type(node) is OscillatorNode:
+                    batch = _constant_oscillator_batch(node, self._length, rate)
+                    if batch is not None:
+                        batches[node] = batch
+        # The direct oscillator-compressor chain has no intermediate node whose
+        # per-sample state can be observed. Process it in one native block.
+        direct = (len(order) == 2 and type(order[0]) is OscillatorNode
+                  and type(order[1]) is DynamicsCompressorNode
+                  and order[0] in batches and order[1]._inputs == [order[0]]
+                  and order[1]._compressor.frame == 0
+                  and self._destination._inputs == [order[1]])
+        if direct:
+            oscillator, compressor = order
+            divisions = [compressor._parameters_at(index / rate)
+                         for index in range(0, self._length, 32)]
+            oscillator_values = batches[oscillator][0]
+            samples = compressor._compressor.process_block(oscillator_values, divisions)
+            oscillator._out = oscillator_values[-1]
+            compressor._out = samples[-1]
+            compressor._reduction = compressor._compressor.reduction
+        else:
+            samples = []
+            for index in range(self._length):
+                seconds = index / rate
+                for node in order:
+                    batch = batches.get(node)
+                    node._out = batch[0][index] if batch is not None else node._compute(seconds)
+                samples.append(sum(source._out for source in self._destination._inputs))
+        for node, (_values, phase, lanes, lane, increment) in batches.items():
+            node._phase = phase
+            node._vector_lanes = lanes
+            if lanes is not None:
+                node._vector_increment = increment
+                node._vector_lane = lane
         processed = math.ceil(self._length / RENDER_QUANTUM) * RENDER_QUANTUM
         for node in order:
             if hasattr(node, "_render_finished"):
@@ -877,9 +1044,13 @@ class DynamicsCompressorNode(AudioNode):
         self._ratio = AudioParam(12.0, minimum=1.0, maximum=20.0)
         self._attack = AudioParam(0.003, minimum=0.0, maximum=1.0)
         self._release = AudioParam(0.25, minimum=0.0, maximum=1.0)
+        for name in ('threshold', 'knee', 'ratio', 'attack', 'release'):
+            parameter = getattr(self, '_' + name)
+            parameter._automation_rate = 'k-rate'
+            parameter._fixed_automation_rate = 'DynamicsCompressor.' + name
         self._reduction = 0.0
         rate = self._context.get_sampleRate() if self._context is not None else SAMPLE_RATE
-        from .audio_compressor import CompressorDSP
+        from ..._audio_native import CompressorDSP
         self._compressor = CompressorDSP(rate)
 
     def get_threshold(self): return self._threshold
@@ -889,11 +1060,16 @@ class DynamicsCompressorNode(AudioNode):
     def get_release(self): return self._release
     def get_reduction(self): return self._reduction
 
+    def _parameters_at(self, seconds):
+        rate = self._context.get_sampleRate() if self._context is not None else SAMPLE_RATE
+        frame = round(seconds * rate)
+        seconds = (frame // RENDER_QUANTUM * RENDER_QUANTUM) / rate
+        return tuple(parameter.value_at(seconds) for parameter in
+                     (self._threshold, self._knee, self._ratio, self._attack, self._release))
+
     def _compute(self, seconds):
         value = super()._compute(seconds)
-        parameters = tuple(parameter.value_at(seconds) for parameter in
-                           (self._threshold, self._knee, self._ratio, self._attack, self._release))
-        output = self._compressor.process(value, parameters)
+        output = self._compressor.process(value, self._parameters_at(seconds))
         self._reduction = self._compressor.reduction
         return output
 
@@ -1309,7 +1485,8 @@ class DelayNode(AudioNode):
     def get_delayTime(self): return self._delay_time
 
     def _compute(self, seconds):
-        delay = max(0.0, self._delay_time.value_at(seconds) * self._rate())
+        delay = max(0.0, _float32(self._delay_time.value_at(seconds) * self._rate(),
+                                  "DelayNode delay in samples"))
         self._history.insert(0, super()._compute(seconds))
         del self._history[self._history_length:]
         position = delay
