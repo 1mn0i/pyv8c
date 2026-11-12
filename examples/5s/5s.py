@@ -13,7 +13,7 @@ import time
 from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path[:0] = [str(ROOT / 'pyv8'), str(ROOT / 'pyv8c')]
+sys.path[:0] = [str(ROOT / 'pyv8c')]
 
 from loguru import logger
 from pyv8c import Browser, register_transport
@@ -32,8 +32,8 @@ URL = 'https://steamdb.info/login/'
 # URL = "https://simple.ripley.com.pe/"
 
 HOST_NAME = urlsplit(URL).hostname
-# PROXY = 'http://127.0.0.1:7890'
-PROXY = None
+PROXY = 'http://127.0.0.1:7890'
+# PROXY = None
 
 
 def run(*, proxy=PROXY, timeout=90):
@@ -117,7 +117,7 @@ def main():
     args = parser.parse_args()
     if args.timeout <= 0:
         parser.error('--timeout must be positive')
-    # logger.remove()
+    logger.remove()
     # logger.add(sys.stderr, level='WARNING')
     try:
         result = run(proxy=args.proxy, timeout=args.timeout)
