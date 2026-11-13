@@ -395,9 +395,11 @@ def gate_offline():
         print("ok   offline: tests/unit runs without the native extension"
               + (f" [{summary[:110]}]" if summary else ""))
         return True
-    print("!    offline: tests/unit needs the native extension:")
-    for line in [line for line in result.stdout.strip().splitlines() if line.strip()][-4:]:
+    print("!    offline: tests/unit failed:")
+    for line in [line for line in result.stdout.strip().splitlines() if line.strip()]:
         print(f"       {line}")
+    if result.stderr.strip():
+        print(result.stderr, file=sys.stderr)
     return False
 
 

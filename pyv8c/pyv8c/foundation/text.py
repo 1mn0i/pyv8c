@@ -281,6 +281,8 @@ def _extent(font, glyph, scale):
         box = font.get_glyph_extents(glyph)
     except Exception:  # noqa: BLE001 - a glyph without outlines has no ink to report
         return (0.0, 0.0, 0.0, 0.0)
+    if box is None:
+        return (0.0, 0.0, 0.0, 0.0)
     return (box.x_bearing * scale, box.y_bearing * scale,
             box.width * scale, box.height * scale)
 

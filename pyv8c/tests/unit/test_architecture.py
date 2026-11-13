@@ -203,6 +203,7 @@ def test_web_element_modules_import_independently(module):
     import subprocess
     import sys
 
+    pytest.importorskip("pyv8c.pyv8", reason="the imported web modules require the native extension")
     result = subprocess.run([sys.executable, "-c", f"import {module}"],
                             capture_output=True, text=True, timeout=15)
     assert result.returncode == 0, result.stderr

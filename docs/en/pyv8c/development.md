@@ -58,8 +58,9 @@ All three platforms use GitHub-hosted runners; Linux uses Ubuntu 22.04 x64 and d
 In **Actions → Build wheels → Run workflow**, select the required platforms. The corresponding artifacts are
 `windows-wheels`, `linux-wheels`, and `macos-arm64-wheels`.
 
-Each Linux job starts on a fresh runner and currently downloads and builds V8 again, requiring considerable
-time and disk space. Verify the available resources and build result in GitHub Actions.
+Each Linux job starts on a fresh runner and attempts to restore a V8 cache matching the runner image and
+build configuration. A cache miss requires downloading and building V8, which takes considerable time and
+disk space. Verify available resources and cache effectiveness in GitHub Actions.
 All platform jobs check a post-install smoke test and a native crash smoke; Linux and macOS also check the native parameter bridge, and the Windows wheel test matrix also runs the architecture layering gate. None of this means the full browser test suite passes.
 
 ## Implementing an Interface

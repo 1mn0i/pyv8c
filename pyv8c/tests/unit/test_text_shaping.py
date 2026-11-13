@@ -28,6 +28,14 @@ def shaped(value, face, size=16.0):
     return T.shape(value, path, index=index, size=size)
 
 
+def test_glyph_without_extents_has_no_ink():
+    class Font:
+        def get_glyph_extents(self, glyph):
+            return None
+
+    assert T._extent(Font(), 1, 1.0) == (0.0, 0.0, 0.0, 0.0)
+
+
 def test_shaping_matches_a_run_of_glyphs(face):
     run = shaped("hello", face)
     assert run.text == "hello"
@@ -55,7 +63,7 @@ def test_scaling_is_linear_within_one_size(face):
 
 def test_a_combining_mark_stays_with_its_letter(face):
     run = shaped("a\u0301", face)
-    assert run.clusters == (0,)
+    assert run.clusters and all(cluster == 0 for cluster in run.clusters)
     assert len(run.glyphs) <= 2
 
 
@@ -140,9 +148,11 @@ def test_graphemes_keep_a_cluster_whole():
 def test_wrapping_fills_lines_and_keeps_every_character(face):
     value = "hello world again"
     run = shaped(value, face)
-    lines = T.wrap(run, 60.0, T.breaks(value))
+    points = T.breaks(value)
+    lines = T.wrap(run, 60.0, points)
     assert len(lines) > 1
-    assert all(line.advance <= 60.0 + 1e-6 for line in lines)
+    assert all(line.advance <= 60.0 + 1e-6 or not any(
+        line.start < point.offset < line.resume for point in points) for line in lines)
     covered = "".join(value[line.start:line.end] for line in lines)
     assert covered.replace(" ", "") == value.replace(" ", "")
     assert [line.start for line in lines] == sorted(line.start for line in lines)

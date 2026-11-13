@@ -58,8 +58,8 @@ V8 和 Chromium 工具链并耗费较长时间及磁盘空间；可通过 `PYV8_
 在 **Actions → Build wheels → Run workflow** 勾选需要的平台并手动运行。对应产物为
 `windows-wheels`、`linux-wheels` 和 `macos-arm64-wheels`。
 
-Linux runner 每次使用新的虚拟机，当前会重新下载并构建 V8，需要较长时间和足够磁盘空间；
-具体可用资源及构建结果需在 GitHub Actions 中确认。
+Linux runner 每次使用新的虚拟机，并尝试恢复匹配镜像和构建配置的 V8 缓存；缓存未命中时
+需要下载并构建 V8，耗时较长且需要足够磁盘空间。可用资源及缓存效果需在 Actions 中确认。
 各平台任务检查安装后冒烟与原生崩溃冒烟；Linux 和 macOS 另检查原生参数桥接，Windows wheel 测试矩阵另跑架构层门禁。这些都不代表浏览器完整测试全部通过。
 
 ## 实现接口
