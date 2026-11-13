@@ -54,19 +54,13 @@ V8 和 Chromium 工具链并耗费较长时间及磁盘空间；可通过 `PYV8_
 ### Windows、Linux 和 macOS CI
 
 仓库的 GitHub Actions 工作流 `Build wheels` 可手动选择并并行构建三个平台的 wheel。
-Windows 和 macOS arm64 使用 GitHub 托管 runner；Linux 使用带 `pyv8c-v8` 标签的自托管 x64 Ubuntu
-runner。先在仓库 **Settings → Actions → Runners → New self-hosted runner** 中选择
-Linux x64，在虚拟机上按 GitHub 页面提供的命令下载并注册 runner；配置时添加自定义
-标签 `pyv8c-v8`，并让 runner 以安装了 Python 3.12 的用户运行。注册令牌由 GitHub
-页面临时生成，不要提交到仓库。启动 runner 后，在 **Actions → Build wheels → Run workflow**
-勾选需要的平台并手动运行。对应产物为 `windows-wheels`、`linux-wheels` 和
-`macos-arm64-wheels`；Ubuntu 未运行时，可取消勾选 Linux。
+三个平台均使用 GitHub 托管 runner，Linux 使用 Ubuntu 22.04 x64，无需本地虚拟机。
+在 **Actions → Build wheels → Run workflow** 勾选需要的平台并手动运行。对应产物为
+`windows-wheels`、`linux-wheels` 和 `macos-arm64-wheels`。
 
-Linux 构建会把 V8 放在运行用户的 `~/.cache/pyv8c-ci/v8` 下供后续任务复用；首次
-构建需要足够的磁盘空间和较长时间。若虚拟机访问 V8 需要代理，应在启动 runner
-进程前配置 `http_proxy` 和 `https_proxy`；如果使用系统服务，也需为该服务配置代理。
+Linux runner 每次使用新的虚拟机，当前会重新下载并构建 V8，需要较长时间和足够磁盘空间；
+具体可用资源及构建结果需在 GitHub Actions 中确认。
 各平台任务检查安装后冒烟与原生崩溃冒烟；Linux 和 macOS 另检查原生参数桥接，Windows wheel 测试矩阵另跑架构层门禁。这些都不代表浏览器完整测试全部通过。
-自托管 runner 会执行工作流代码，应仅用于受信任的工作流和代码来源。
 
 ## 实现接口
 
