@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def test_optional_interface_modules_stay_unimported_until_first_use():
     """Use a child process because module imports are process-global caches."""
+    pytest.importorskip("pyv8c.pyv8", reason="Browser requires the native extension")
     code = textwrap.dedent("""
         import json
         import os
