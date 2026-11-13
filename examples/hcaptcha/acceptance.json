@@ -1,0 +1,56 @@
+{
+  "date": "2026-11-13",
+  "timezone": "Asia/Shanghai",
+  "source_sha256": "340eedc003a6cd9e25caf9920a0f383b8f09bb39d62a7e2685ae9f313548230e",
+  "proxy": "http://127.0.0.1:6696",
+  "results": [
+    {
+      "verification": "fresh local CLI execution before commit",
+      "exit_code": 1,
+      "accepted": false,
+      "prefix": "",
+      "token_length": 0,
+      "elapsed_seconds": 9.55,
+      "browser_artifacts_used": false,
+      "info_log_lines": 4,
+      "success_log_lines": 0,
+      "getcaptcha_http_200": false,
+      "contains_req_log": false,
+      "error_tail": [
+        "12:10:07 | ERROR   | network-error"
+      ]
+    },
+    {
+      "verification": "second independent local CLI execution before commit",
+      "exit_code": 0,
+      "accepted": true,
+      "prefix": "P1_",
+      "token_length": 2476,
+      "elapsed_seconds": 10.36,
+      "browser_artifacts_used": false,
+      "info_log_lines": 8,
+      "success_log_lines": 1,
+      "getcaptcha_http_200": true,
+      "contains_req_log": true,
+      "token_sha256": "d61b72fb4b4bb3345af2a59e7786e4d9bb29c914489382dcca9b2b236a55f7ed"
+    }
+  ],
+  "framework_tests": {
+    "passed": 43,
+    "files": [
+      "pyv8c/tests/unit/test_audio_native.py",
+      "pyv8c/tests/browser/test_font_faces.py"
+    ]
+  },
+  "policy_checks": {
+    "exit_code": 0,
+    "summary": [
+      "ok   layers: the architecture rules hold",
+      "ok   companions: 77 changed path(s), tests move with them",
+      "ok   startup: 399.3 ms median (min 397.9), budget 834.5 ms",
+      "ok   offline: tests/unit runs without the native extension [378 passed, 41 skipped, 2 deselected in 6.48s]",
+      "ok   duplicates: no test repeats a corpus case",
+      "PASS: 6/6 gate(s) clean"
+    ]
+  }
+}

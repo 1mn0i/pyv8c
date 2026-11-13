@@ -36,6 +36,19 @@ def _names():
     pytest.skip("this machine has no face with two distinct names")
 
 
+@pytest.mark.parametrize("receiver", ["window", "{}", "null"])
+def test_load_with_invalid_receiver_rejects_a_promise(page, receiver):
+    page.evaluate("""globalThis.__invalidLoad = null;
+        const result = FontFace.prototype.load.call(RECEIVER);
+        globalThis.__isPromise = result instanceof Promise;
+        result.then(() => __invalidLoad = 'resolved',
+                    error => __invalidLoad = error.name);
+    """.replace("RECEIVER", receiver))
+    page.wait_for("__invalidLoad !== null", timeout=2)
+    assert page.evaluate("__isPromise") is True
+    assert page.evaluate("__invalidLoad") == "TypeError"
+
+
 def test_font_face_family_serializes_as_a_single_css_family_name(page):
     assert page.evaluate('''(() => [
       new FontFace('Cambria Math', 'local(Arial)').family,

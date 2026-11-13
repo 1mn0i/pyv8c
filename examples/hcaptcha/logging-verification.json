@@ -1,0 +1,30 @@
+{
+  "entry_sha256": "6b03502d6ae83212aeafd30b760ac50c5a1b148d4eb83aa2298ee627c0245414",
+  "exit_code": 0,
+  "accepted": true,
+  "prefix": "P1_",
+  "token_length": 2475,
+  "elapsed_seconds": 6.71,
+  "log_fields_present": {
+    "entry": true,
+    "api_js": true,
+    "hsw_js": true,
+    "config": true,
+    "req": true,
+    "getcaptcha": true,
+    "token_length": true
+  },
+  "log_lines": 9,
+  "log_labels": [
+    "[开始]",
+    "[资源]",
+    "[资源]",
+    "[资源]",
+    "[配置]",
+    "[参数]",
+    "[资源]",
+    "[校验]",
+    "[通过]"
+  ],
+  "token_sha256": "4d3dd85a25c12de770f1d3fe424a1ebfbbf49cfee894416cc4ff391296a0fd04"
+}

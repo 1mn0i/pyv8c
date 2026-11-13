@@ -417,6 +417,11 @@ class FontFace:
         return self._loaded
 
     def fn_load(self, *_extra):
+        if not isinstance(self, FontFace):
+            from ...foundation.promises import make_promise
+            promise, _, reject = make_promise(pyv8.current_context())
+            reject(js_error_value(PageTypeError("Illegal invocation")))
+            return promise
         if self._status == "unloaded":
             self._begin()
         return self.get_loaded()
