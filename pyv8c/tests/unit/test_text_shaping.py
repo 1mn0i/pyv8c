@@ -28,6 +28,14 @@ def shaped(value, face, size=16.0):
     return T.shape(value, path, index=index, size=size)
 
 
+def test_glyph_without_extents_has_no_ink():
+    class Font:
+        def get_glyph_extents(self, glyph):
+            return None
+
+    assert T._extent(Font(), 1, 1.0) == (0.0, 0.0, 0.0, 0.0)
+
+
 def test_shaping_matches_a_run_of_glyphs(face):
     run = shaped("hello", face)
     assert run.text == "hello"
