@@ -226,11 +226,20 @@ jobs:
           path: |
             pyv8/.pyv8-build/versions/${{ steps.linux-environment.outputs.v8-version }}/v8/include
             pyv8/.pyv8-build/versions/${{ steps.linux-environment.outputs.v8-version }}/v8/out/pyv8-x64.release
-          key: linux-v8-x64-${{ steps.linux-environment.outputs.image }}-${{ hashFiles('pyv8/V8_VERSION', 'pyv8/v8_build.py') }}
+            pyv8/.pyv8-build/versions/${{ steps.linux-environment.outputs.v8-version }}/v8/third_party/llvm-build/Release+Asserts/bin/ld.lld
+            pyv8/.pyv8-build/versions/${{ steps.linux-environment.outputs.v8-version }}/v8/third_party/llvm-build/Release+Asserts/bin/lld
+          key: linux-v8-v2-x64-${{ steps.linux-environment.outputs.image }}-${{ hashFiles('pyv8/V8_VERSION', 'pyv8/v8_build.py') }}
       - name: Prepare V8
         shell: bash
         working-directory: pyv8
         run: python -c "from v8_build import V8BuildConfig; V8BuildConfig.from_environment('.', download_and_build=True).prepare()"
+      - name: Verify V8 linker
+        shell: bash
+        run: |
+          set -euo pipefail
+          linker="pyv8/.pyv8-build/versions/${{ steps.linux-environment.outputs.v8-version }}/v8/third_party/llvm-build/Release+Asserts/bin/ld.lld"
+          test -x "$linker"
+          "$linker" --version
       - name: Save V8 build cache
         if: ${{ steps.linux-v8-cache.outputs.cache-hit != 'true' }}
         continue-on-error: true
@@ -239,7 +248,9 @@ jobs:
           path: |
             pyv8/.pyv8-build/versions/${{ steps.linux-environment.outputs.v8-version }}/v8/include
             pyv8/.pyv8-build/versions/${{ steps.linux-environment.outputs.v8-version }}/v8/out/pyv8-x64.release
-          key: linux-v8-x64-${{ steps.linux-environment.outputs.image }}-${{ hashFiles('pyv8/V8_VERSION', 'pyv8/v8_build.py') }}
+            pyv8/.pyv8-build/versions/${{ steps.linux-environment.outputs.v8-version }}/v8/third_party/llvm-build/Release+Asserts/bin/ld.lld
+            pyv8/.pyv8-build/versions/${{ steps.linux-environment.outputs.v8-version }}/v8/third_party/llvm-build/Release+Asserts/bin/lld
+          key: linux-v8-v2-x64-${{ steps.linux-environment.outputs.image }}-${{ hashFiles('pyv8/V8_VERSION', 'pyv8/v8_build.py') }}
       - name: Build and check Linux wheel
         shell: bash
         run: |
